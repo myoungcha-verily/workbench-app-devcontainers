@@ -179,6 +179,8 @@ class Turn:
 
         latency_ms = int((time.time() - started) * 1000)
         tps = round(eval_tokens / (eval_ns / 1e9), 1) if eval_ns else None
+        print(f"[agent] {self.session.id} {model} turn done in {latency_ms}ms, {eval_tokens} tokens, "
+              f"{tps} tok/s, context {last_prompt_tokens}{' (stopped)' if stopped else ''}", flush=True)
         # Stats go on the last assistant message so reloaded chats show them.
         for m in reversed(self.session.messages):
             if m.role == "assistant":
@@ -252,6 +254,9 @@ class Turn:
             self.error_streak = 0
 
         duration_ms = int((time.time() - started) * 1000)
+        # One line per tool call, so `wb app logs` shows what the agent did.
+        print(f"[agent] {self.session.id} {self.settings.model_id} {name} "
+              f"{'error' if is_error else 'ok'} {duration_ms}ms {tools.dumps(args)[:160]}", flush=True)
         self.session.messages.append(ChatMessage(
             role="tool", content=tools.truncate(text, TOOL_RESULT_CHARS_MODEL), tool_name=name, tool_call_id=call_id,
             meta={"is_error": is_error, "duration_ms": duration_ms, **({"artifact_id": extra["artifact"]["id"]} if "artifact" in extra else {})},
