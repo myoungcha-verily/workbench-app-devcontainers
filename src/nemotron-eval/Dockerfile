@@ -4,10 +4,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# sudo and a real user are required by Workbench's post-startup.sh; procps
+# Workbench's post-startup.sh needs sudo, a real user, and Java on PATH
+# (install-java.sh links `which java`; the wb CLI runs on Java 17). procps
 # provides pgrep for the MCP server's start script.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git jq procps sudo zstd \
+    && apt-get install -y --no-install-recommends ca-certificates curl git jq openjdk-17-jre-headless procps sudo zstd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 nemotron \
