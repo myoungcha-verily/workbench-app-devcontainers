@@ -1,0 +1,21 @@
+{
+    "id": "nemotron-eval",
+    "version": "2.0.0",
+    "name": "Nemotron Eval Terminal",
+    "description": "Chat, agent and canvas UI for self-hosted NVIDIA Nemotron models (Ollama) with Workbench MCP tools, BigQuery, and generated workspace context.",
+    "options": {
+        "cloud": {
+            "type": "string",
+            "description": "VM cloud environment",
+            "proposals": ["gcp"],
+            "default": "gcp"
+        },
+        "login": {
+            "type": "string",
+            "description": "Whether to log in to workbench CLI",
+            "proposals": ["true", "false"],
+            "default": "false"
+        }
+    },
+    "platforms": ["Any"]
+}

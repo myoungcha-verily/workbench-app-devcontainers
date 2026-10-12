@@ -1,0 +1,109 @@
+{
+  "tasks": [
+    {
+      "id": "sql_list_tables",
+      "name": "List BigQuery Tables",
+      "prompt": "Write a BigQuery SQL query to list all tables in the BF_20240610_InternalLab dataset with their row counts and sizes in GB.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_top_diagnoses",
+      "name": "Top ICD-10 Codes",
+      "prompt": "Write a BigQuery SQL query to find the top 20 most frequent ICD-10 diagnosis codes from the diagnoses table, including code, description, and count. Order by count descending.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_cohort_demographics",
+      "name": "Cohort Demographics",
+      "prompt": "Write a BigQuery SQL query to compute age distribution (mean, median, min, max, stddev), sex breakdown, and race/ethnicity breakdown for the person table in the synthetic All of Us dataset.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_lab_trends",
+      "name": "Lab Value Trends Over Time",
+      "prompt": "Write a BigQuery SQL query to show monthly average values for HbA1c (LOINC 4548-4) over the last 2 years, with count of measurements per month. Filter to adult patients (age >= 18).",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_join_person_labs",
+      "name": "Person-Lab Join with Filters",
+      "prompt": "Write a BigQuery SQL query joining person, condition_occurrence, and measurement tables to find patients with Type 2 Diabetes (ICD-10 E11*) who have HbA1c > 9.0 in the last 6 months. Return person_id, age, sex, latest HbA1c value, and date.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "python_data_quality",
+      "name": "Data Quality Report",
+      "prompt": "Write a Python script using pandas and google-cloud-bigquery to generate a data quality report for a given table: column names, dtypes, null counts, null percentages, unique counts, min/max for numeric columns, top 5 values for categorical columns. Output as formatted markdown.",
+      "category": "Python",
+      "expected_output": ""
+    },
+    {
+      "id": "python_cohort_flow",
+      "name": "Cohort Flow Diagram",
+      "prompt": "Write a Python script using graphviz to create a CONSORT-style cohort flow diagram: start with N patients, apply inclusion criteria (age 18+, has condition X), apply exclusion criteria (has condition Y, missing lab Z), show final N at each step. Render to SVG.",
+      "category": "Python",
+      "expected_output": ""
+    },
+    {
+      "id": "python_visualization",
+      "name": "Interactive Plotly Dashboard",
+      "prompt": "Write a Python script using plotly.express to create an interactive dashboard with: 1) histogram of age by sex, 2) box plot of BMI by race/ethnicity, 3) scatter plot of HbA1c vs age colored by diabetes status, 4) sunburst chart of condition hierarchy. Save as standalone HTML.",
+      "category": "Python",
+      "expected_output": ""
+    },
+    {
+      "id": "reasoning_clinical",
+      "name": "Clinical Reasoning",
+      "prompt": "A 65-year-old male with Type 2 Diabetes (HbA1c 8.2%), hypertension, and CKD stage 3 presents with new onset peripheral edema. His medications include metformin, lisinopril, and atorvastatin. List 3 differential diagnoses with reasoning, recommended workup, and medication adjustments considering renal function.",
+      "category": "Reasoning",
+      "expected_output": ""
+    },
+    {
+      "id": "reasoning_research_design",
+      "name": "Study Design Critique",
+      "prompt": "Critique this study design: 'We will compare 30-day readmission rates between patients discharged on weekends vs weekdays using EHR data from 5 hospitals. Primary outcome is all-cause readmission. We will use chi-square test.' Identify at least 5 methodological concerns and suggest improvements.",
+      "category": "Reasoning",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_window_functions",
+      "name": "Window Functions - First/Last Values",
+      "prompt": "Write a BigQuery SQL query using window functions to find, for each patient, their first and last HbA1c measurement in 2023, the change between them, and flag if change > 1.0. Include patient demographics.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "python_statistical_test",
+      "name": "Statistical Analysis",
+      "prompt": "Write a Python script using scipy.stats to: 1) Test if mean HbA1c differs between sexes (t-test), 2) Test if readmission rate differs by insurance type (chi-square), 3) Calculate correlation between age and number of medications (Spearman), 4) Generate a publication-ready Table 1 with standardized mean differences.",
+      "category": "Python",
+      "expected_output": ""
+    },
+    {
+      "id": "sql_cohort_builder",
+      "name": "Cohort Builder Query",
+      "prompt": "Write a parameterized BigQuery SQL query that builds a cohort with these criteria: index date = first diagnosis of condition X, inclusion = age 18-89 at index, continuous enrollment 365 days prior, no condition Y in 365 days prior, at least 1 measurement of lab Z in 180 days prior. Output cohort table with person_id, index_date, and all criteria flags.",
+      "category": "SQL",
+      "expected_output": ""
+    },
+    {
+      "id": "python_ml_baseline",
+      "name": "ML Baseline Model",
+      "prompt": "Write a Python script using scikit-learn to build a baseline logistic regression model predicting 30-day readmission. Include: train/test split, feature engineering (age bins, comorbidity count, prior utilization), handling class imbalance (SMOTE or class_weight), evaluation metrics (AUC, precision, recall, calibration plot), and feature importance plot.",
+      "category": "Python",
+      "expected_output": ""
+    },
+    {
+      "id": "reasoning_data_interpretation",
+      "name": "Interpret Results",
+      "prompt": "You ran a Cox proportional hazards model for time to insulin initiation in Type 2 Diabetes. HR for HbA1c (per 1%) = 1.45 (95% CI 1.32-1.59), HR for metformin use = 0.68 (0.55-0.84), HR for age (per 10yr) = 1.12 (1.05-1.20). Interpret these results clinically. What assumptions should you check?",
+      "category": "Reasoning",
+      "expected_output": ""
+    }
+  ]
+}

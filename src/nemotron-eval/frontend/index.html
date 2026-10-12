@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nemotron Eval Terminal</title>
+    <!-- All paths are relative so they resolve under the Workbench proxy prefix. -->
+    <link rel="stylesheet" href="css/app.css">
+    <link rel="stylesheet" href="vendor/hljs-dark.min.css" id="hljs-theme">
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/purify.min.js"></script>
+    <script src="vendor/highlight.min.js"></script>
+</head>
+<body>
+<header class="header">
+    <button class="btn icon" id="sidebar-toggle" title="Toggle sidebar (Ctrl+B)">☰</button>
+    <h1 class="brand">⚡ Nemotron <span class="muted">Eval Terminal</span></h1>
+    <div class="controls">
+        <label class="control" title="Model">
+            <span>Model</span>
+            <select id="model-select" class="input"><option value="">Loading…</option></select>
+        </label>
+        <label class="control" title="Reasoning (thinking) mode">
+            <span>Reasoning</span>
+            <select id="reasoning-select" class="input"></select>
+        </label>
+        <label class="control" title="Effort: output budget and how many tool steps the agent may take">
+            <span>Effort</span>
+            <select id="effort-select" class="input">
+                <option value="quick">Quick</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="thorough">Thorough</option>
+            </select>
+        </label>
+        <label class="control" title="Assistant preset">
+            <span>Mode</span>
+            <select id="preset-select" class="input"></select>
+        </label>
+    </div>
+    <div class="header-right">
+        <button class="status-pill" id="status-pill" title="System status">
+            <span class="dot" id="status-dot"></span><span id="status-text">Starting…</span>
+        </button>
+        <button class="btn icon" id="settings-btn" title="Settings">⚙</button>
+        <button class="btn icon" id="theme-btn" title="Toggle light/dark theme">◐</button>
+        <button class="btn icon" id="canvas-btn" title="Toggle canvas (Ctrl+.)">🎨</button>
+        <button class="btn icon" id="help-btn" title="Shortcuts and commands">?</button>
+    </div>
+</header>
+
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sidebar-tabs">
+            <button class="tab-btn active" data-tab="chats">Chats</button>
+            <button class="tab-btn" data-tab="prompts">Prompts</button>
+            <button class="tab-btn" data-tab="compare">Compare</button>
+            <button class="tab-btn" data-tab="eval">Eval</button>
+        </div>
+        <div class="tab-panel active" id="tab-chats">
+            <button class="btn primary block" id="new-chat-btn" title="New chat (Ctrl+K)">＋ New chat</button>
+            <input class="input" id="session-search" placeholder="Search chats…">
+            <ul class="session-list" id="session-list"></ul>
+        </div>
+        <div class="tab-panel" id="tab-prompts">
+            <button class="btn block" id="save-prompt-btn">＋ Save current input as prompt</button>
+            <input class="input" id="prompt-search" placeholder="Search prompts…">
+            <div id="prompt-list"></div>
+        </div>
+        <div class="tab-panel" id="tab-compare">
+            <p class="muted small">Send one prompt to several models and compare answers side by side. No tools. Models run one after another; switching models reloads GPU memory (about a minute for the 30B).</p>
+            <textarea class="input" id="compare-prompt" rows="6" placeholder="Prompt to compare…"></textarea>
+            <div id="compare-models" class="checkbox-list"></div>
+            <button class="btn primary block" id="compare-run">Compare</button>
+        </div>
+        <div class="tab-panel" id="tab-eval">
+            <input class="input" id="eval-name" placeholder="Run name (optional)">
+            <div class="muted small">Models</div>
+            <div id="eval-models" class="checkbox-list"></div>
+            <div class="muted small">Tasks <button class="btn tiny ghost" id="eval-toggle-all">toggle all</button></div>
+            <div id="eval-tasks" class="checkbox-list scroll"></div>
+            <button class="btn primary block" id="eval-run">Run evaluation</button>
+            <div id="eval-runs"></div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <section class="chat-container" id="chat-view">
+            <div class="chat-header">
+                <span id="chat-title">New chat</span>
+                <span class="spacer"></span>
+                <button class="btn tiny ghost" id="export-btn" title="Download chat as Markdown">⬇ Export</button>
+                <button class="btn tiny ghost" id="save-chat-btn" title="Save chat to a workspace bucket">☁ Save to bucket</button>
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="composer">
+                <div class="slash-menu" id="slash-menu"></div>
+                <div class="chips" id="attachments"></div>
+                <div class="input-row">
+                    <button class="btn icon" id="attach-btn" title="Attach text files (CSV, JSON, code…)">📎</button>
+                    <input type="file" id="file-input" multiple hidden>
+                    <textarea id="chat-input" rows="1" placeholder="Ask about your workspace… ( / for commands )"></textarea>
+                    <button class="btn primary" id="send-btn">Send</button>
+                </div>
+            </div>
+        </section>
+        <section class="compare-view" id="compare-view" hidden>
+            <div class="chat-header">
+                <span>Compare</span><span class="spacer"></span>
+                <button class="btn tiny" id="compare-close">Back to chat</button>
+            </div>
+            <div class="compare-prompt" id="compare-prompt-view"></div>
+            <div class="compare-columns" id="compare-columns"></div>
+        </section>
+        <section class="eval-view" id="eval-view" hidden>
+            <div class="chat-header">
+                <span id="eval-title">Evaluation</span><span class="spacer"></span>
+                <button class="btn tiny" id="eval-close">Back to chat</button>
+            </div>
+            <div id="eval-content" class="eval-content"></div>
+        </section>
+    </main>
+
+    <aside class="canvas" id="canvas">
+        <div class="canvas-head">
+            <div class="canvas-tabs"></div>
+            <button class="btn icon canvas-new" title="New artifact">＋</button>
+            <button class="btn icon canvas-close" title="Close canvas">✕</button>
+        </div>
+        <div class="canvas-toolbar"></div>
+        <div class="canvas-body"></div>
+    </aside>
+</div>
+
+<div class="drawer" id="settings-drawer" hidden>
+    <div class="drawer-head"><h3>Settings</h3><button class="btn icon" id="settings-close">✕</button></div>
+    <label class="field"><span>Custom instructions (added to the system prompt for this chat)</span>
+        <textarea class="input" id="system-prompt" rows="5" placeholder="e.g. Answer concisely. Use the BF_20240610 datasets."></textarea></label>
+    <label class="field row"><input type="checkbox" id="tools-toggle" checked> <span>Let the model use Workbench tools</span></label>
+    <label class="field"><span>Temperature <span class="muted" id="temp-value">model default</span></span>
+        <div class="row"><input type="checkbox" id="temp-default" checked> <span class="small">default</span>
+        <input type="range" id="temperature" min="0" max="1.5" step="0.05" value="0.6" disabled></div></label>
+    <label class="field"><span>Max output tokens per step (blank = effort default)</span>
+        <input class="input" id="max-tokens" type="number" min="256" max="65536" placeholder="effort default"></label>
+    <label class="field row"><input type="checkbox" id="show-reasoning"> <span>Expand reasoning while streaming</span></label>
+    <label class="field row"><input type="checkbox" id="notify-toggle"> <span>Browser notification when a reply finishes or needs approval (while this tab is hidden)</span></label>
+    <hr>
+    <label class="field"><span>Data notes — shared by all chats. Describe codes, units and flags the model should know (e.g. "VISIT = 'STUDY_START' marks baseline; sleep durations are in milliseconds").</span>
+        <textarea class="input mono" id="data-notes" rows="10"></textarea></label>
+    <button class="btn primary" id="save-notes">Save data notes</button>
+    <span class="muted small" id="notes-status"></span>
+</div>
+
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
