@@ -15,6 +15,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import context
+import eval_api
 import ollama_client
 import sqlrun
 import tools
@@ -50,6 +51,7 @@ def spawn(coro):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    eval_api.load_token()
     gpu = detect_gpu()
     compat = check_compatibility(gpu)
     app.state.gpu = gpu
@@ -637,4 +639,6 @@ async def list_tasks():
 
 # Mounted last so /api and /ws routes take precedence. Serving the frontend at
 # the root keeps its relative asset paths working behind the Workbench proxy.
+app.middleware("http")(eval_api.guard)
+app.include_router(eval_api.router)
 app.mount("/", StaticFiles(directory=APP_ROOT / "frontend", html=True), name="frontend")
