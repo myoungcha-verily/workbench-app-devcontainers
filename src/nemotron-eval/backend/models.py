@@ -56,6 +56,8 @@ class ChatSettings(Base):
     tools: bool = True
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    # OpenShell pilot: run code in a sandbox, broker SQL, read-only Workbench tools.
+    governed: bool = True
 
 
 class ChatMessage(Base):

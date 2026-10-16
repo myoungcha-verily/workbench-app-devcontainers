@@ -277,6 +277,12 @@ body.sidebar-collapsed .sidebar { display: none; }
 .tool-card summary { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; list-style: none; }
 .tool-card summary::-webkit-details-marker { display: none; }
 .tool-card.awaiting { border-color: var(--warn); }
+.tool-card.blocked { border-color: #2e8b57; }
+.policy-block { border: 1px solid #2e8b57; border-left-width: 4px; border-radius: 6px; margin: -4px 0 8px; padding: 6px 10px; background: rgba(46, 139, 87, 0.12); font-size: 13px; }
+.policy-block-title { font-weight: 600; color: #3cb371; }
+.policy-block ul { margin: 4px 0 0 18px; padding: 0; }
+.governed-control select { font-weight: 600; }
+body.ungoverned .governed-control select { color: var(--warn); border-color: var(--warn); }
 .tool-status { width: 14px; text-align: center; flex-shrink: 0; }
 .tool-status.running::before { content: ""; display: inline-block; width: 10px; height: 10px; border: 2px solid var(--fg-muted); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 .tool-status.ok::before { content: "✓"; color: var(--ok); }

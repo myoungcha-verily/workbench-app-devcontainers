@@ -85,6 +85,28 @@ LOCAL_TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "run_python",
+        "description": (
+            "Run Python 3 code in this chat's working directory and return what it prints. Files persist "
+            "between calls. pandas, numpy, scipy, statsmodels and matplotlib are installed. To get BigQuery "
+            "data as a DataFrame: `from workbench_data import query; df = query(\"SELECT ...\")`."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"code": {"type": "string", "description": "Python source; print() what you need to see"}},
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "run_shell",
+        "description": "Run a bash command in this chat's working directory and return its output (stdout, stderr, exit code).",
+        "parameters": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+    },
+    {
         "name": "list_skills",
         "description": "List Workbench skill guides (dashboards, data discovery, custom apps, workflows, scientific domains).",
         "parameters": {"type": "object", "properties": {}},
@@ -168,6 +190,23 @@ def needs_confirmation(name: str, args: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# Governed chats (OpenShell pilot) may use only Workbench tools that read.
+# Generic CLI passthroughs (gcloud, gsutil, wb, git, bq) can copy data anywhere
+# the user's credentials reach, so they are not offered at all.
+_GOVERNED_READ_TOOL = re.compile(
+    r"(^|_)(list|get|describe|status|tree|check_access|count_instances|sample_instances|query_hints|get_schema|get_entity|version|resolve)($|_)"
+)
+GOVERNED_DENIED_MCP = _COMMAND_TOOLS | {"resource_credentials", "resource_open_console", "s3_read_file", "s3_copy", "s3_write_file"}
+
+
+def governed_allows(name: str) -> bool:
+    if name in LOCAL_TOOL_NAMES:
+        return True
+    if name in GOVERNED_DENIED_MCP or _DESTRUCTIVE_NAME.search(name):
+        return False
+    return bool(_GOVERNED_READ_TOOL.search(name))
+
+
 def to_ollama(name: str, description: str, schema: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     params = dict(schema or {})
     params.setdefault("type", "object")
@@ -175,11 +214,11 @@ def to_ollama(name: str, description: str, schema: Optional[Dict[str, Any]]) -> 
     return {"type": "function", "function": {"name": name, "description": description or name, "parameters": params}}
 
 
-def tool_schemas(mcp_tools: Dict[str, Dict[str, Any]], active: Set[str]) -> List[Dict[str, Any]]:
+def tool_schemas(mcp_tools: Dict[str, Dict[str, Any]], active: Set[str], governed: bool = False) -> List[Dict[str, Any]]:
     schemas = [to_ollama(t["name"], t["description"], t["parameters"]) for t in LOCAL_TOOLS]
     for name in CORE_MCP_TOOLS + sorted(active - set(CORE_MCP_TOOLS)):
         tool = mcp_tools.get(name)
-        if tool:
+        if tool and (not governed or governed_allows(name)):
             schemas.append(to_ollama(name, tool.get("description", ""), tool.get("inputSchema")))
     return schemas
 

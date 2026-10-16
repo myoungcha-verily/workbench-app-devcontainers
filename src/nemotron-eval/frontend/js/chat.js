@@ -120,7 +120,7 @@ export class Chat {
                 if (m.tokens) this.finishTurn(turn, { tokens: m.tokens, latency_ms: m.latency_ms, tokens_per_s: m.meta?.tokens_per_s, context_tokens: m.meta?.context_tokens });
             } else if (m.role === 'tool') {
                 const isError = !!m.meta?.is_error;
-                this.updateToolCard(m.tool_call_id, { ok: !isError, result: m.content, duration_ms: m.meta?.duration_ms, name: m.tool_name });
+                this.updateToolCard(m.tool_call_id, { ok: !isError, result: m.content, duration_ms: m.meta?.duration_ms, name: m.tool_name, blocked: m.meta?.blocked });
                 if (m.meta?.artifact_id) {
                     const art = this.app.canvas.artifacts.get(m.meta.artifact_id);
                     this.artifactChip(turn, { id: m.meta.artifact_id, title: art?.title || artifactTitles.get(m.meta.artifact_id) || m.meta.artifact_id, type: art?.type || '' });
@@ -208,6 +208,20 @@ export class Chat {
         entry.card.querySelector('.tool-time').textContent = ev.duration_ms !== undefined ? `${(ev.duration_ms / 1000).toFixed(1)}s` : '';
         entry.detail.querySelector('.tool-result-wrap')?.remove();
         const wrap = el('div', { class: 'tool-result-wrap' }, el('div', { class: 'tool-label' }, ev.ok ? 'Result' : 'Error'));
+        // Outside the <details> so it shows while the card is collapsed.
+        entry.block?.remove();
+        if (ev.blocked) {
+            entry.card.classList.add('blocked');
+            const events = ev.blocked.events || [];
+            const layer = ev.blocked.layer === 'openshell' ? 'NVIDIA OpenShell sandbox' : 'Workbench governance policy';
+            entry.block = el('div', { class: 'policy-block' },
+                el('div', { class: 'policy-block-title' }, `🛡 Blocked by ${layer}`),
+                events.length
+                    ? el('ul', {}, events.map(e => el('li', {}, e.summary)))
+                    : el('div', {}, ev.blocked.rule || ''),
+            );
+            entry.card.after(entry.block);
+        }
         if (ev.sql_result) {
             const r = ev.sql_result;
             wrap.append(el('div', { class: 'muted small' }, `${r.rows.length} of ${formatNumber(r.total_rows)} rows`), resultTable(r.columns, r.rows, { maxRows: 100 }));

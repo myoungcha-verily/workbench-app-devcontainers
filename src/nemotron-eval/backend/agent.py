@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
+import audit
 import context
 import ollama_client
 import sqlrun
@@ -97,6 +98,7 @@ class Turn:
         model_info: Dict[str, Any],
         emit: Emit,
         confirm: Confirm,
+        executors: Optional[Dict[bool, Any]] = None,
     ):
         self.session = session
         self.settings = settings
@@ -109,6 +111,9 @@ class Turn:
         self.error_streak = 0
         self.emit = emit
         self.confirm = confirm
+        # executors[governed] runs run_shell / run_python.
+        self.executors = executors or {}
+        self.governed = bool(settings.governed)
         self.partial = ""
         self.partial_thinking = ""
 
@@ -142,7 +147,7 @@ class Turn:
             for step in range(effort["max_steps"]):
                 history = fit_history(system, self.session.messages, int(NUM_CTX * 0.8))
                 messages = [{"role": "system", "content": system}] + to_ollama_messages(history)
-                schemas = tools.tool_schemas(self.mcp.by_name, set(self.session.active_tools)) if use_tools else None
+                schemas = tools.tool_schemas(self.mcp.by_name, set(self.session.active_tools), self.governed) if use_tools else None
 
                 content, thinking, calls, final = await self._stream_step(model, messages, schemas, think)
                 eval_tokens += final.get("eval_count", 0)
@@ -230,8 +235,10 @@ class Turn:
                     "This exact call already failed with:\n" + self.failed_calls[signature][:1500]
                     + "\nDo not repeat it. Change the arguments or try a different approach."
                 )
+            if self.governed and not tools.governed_allows(name):
+                raise sqlrun.PolicyDenied(f"{name} is not allowed in governed chats (read-only Workbench tools only)")
             reason = tools.needs_confirmation(name, args)
-            if name == "run_sql" and not reason:
+            if name == "run_sql" and not reason and not self.governed:
                 info = await sqlrun.check(args.get("sql", ""))
                 if info["destructive"]:
                     reason = f"this {info['statement_type']} statement deletes data"
@@ -239,6 +246,10 @@ class Turn:
                 text, is_error = "The user denied this action. Do not retry it; ask the user how to proceed.", True
             else:
                 text, is_error, extra = await self._execute(name, args, confirmed=bool(reason))
+        except sqlrun.PolicyDenied as e:
+            text, is_error = f"Blocked by policy: {e}", True
+            extra = {"blocked": {"layer": "app", "rule": str(e)}}
+            audit.record(self.session.id, "app", "deny", name, str(e), args)
         except Exception as e:
             text, is_error = f"Error: {sqlrun.friendly_error(e)}", True
             if name == "run_sql" and not repeated:
@@ -259,7 +270,9 @@ class Turn:
               f"{'error' if is_error else 'ok'} {duration_ms}ms {tools.dumps(args)[:160]}", flush=True)
         self.session.messages.append(ChatMessage(
             role="tool", content=tools.truncate(text, TOOL_RESULT_CHARS_MODEL), tool_name=name, tool_call_id=call_id,
-            meta={"is_error": is_error, "duration_ms": duration_ms, **({"artifact_id": extra["artifact"]["id"]} if "artifact" in extra else {})},
+            meta={"is_error": is_error, "duration_ms": duration_ms,
+                  **({"artifact_id": extra["artifact"]["id"]} if "artifact" in extra else {}),
+                  **({"blocked": extra["blocked"]} if "blocked" in extra else {})},
         ))
         await self.emit({
             "type": "tool_result", "id": call_id, "name": name, "ok": not is_error, "duration_ms": duration_ms,
@@ -287,6 +300,21 @@ class Turn:
             return f"Tables in `{full}`:\n{lines}", False, {}
         if name == "describe_table":
             return await self.catalog.describe(str(args.get("table", ""))), False, {}
+        if name in ("run_shell", "run_python"):
+            executor = self.executors.get(self.governed)
+            if executor is None:
+                return "Code execution is not available in this app.", True, {}
+            if name == "run_shell":
+                result = await executor.shell(sid, str(args.get("command", "")))
+            else:
+                result = await executor.python(sid, str(args.get("code", "")))
+            extra = {"blocked": result["blocked"]} if result.get("blocked") else {}
+            return result["text"], result["exit_code"] != 0, extra
+        if name == "run_sql" and self.governed:
+            result = await sqlrun.run_governed(args.get("sql", ""), int(args.get("max_rows") or 50))
+            audit.record(sid, "broker", "allow", "run_sql", f"{result['bytes_processed']} bytes", args)
+            preview = {**result, "rows": result["rows"][:100]}
+            return sqlrun.as_text(result), False, {"sql_result": preview}
         if name == "run_sql":
             result = await sqlrun.run(args.get("sql", ""), int(args.get("max_rows") or 50), confirmed=confirmed)
             preview = {**result, "rows": result["rows"][:100]}

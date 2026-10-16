@@ -7,6 +7,23 @@ const EXT = { markdown: 'md', sql: 'sql', html: 'html', chart: 'json', csv: 'csv
 // Injected into HTML mini-apps: `await workbench.query(sql)` asks the parent
 // page to run a SELECT through the backend. The iframe has an opaque origin,
 // so it cannot call the API itself.
+// Mini-apps get query results through the bridge, so nothing in them may talk
+// to the network: no fetch/XHR/WebSocket, images, fonts, forms or frames from
+// other hosts. Scripts may come from the CDNs the system prompt allows.
+const MINIAPP_CSP = `<meta http-equiv="Content-Security-Policy" content="${[
+    "default-src 'none'",
+    "script-src 'unsafe-inline' 'unsafe-eval' blob: https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://cdn.plot.ly",
+    "style-src 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
+    "img-src data: blob:",
+    "font-src data:",
+    "media-src data: blob:",
+    "worker-src blob:",
+    "connect-src 'none'",
+    "form-action 'none'",
+    "frame-src 'none'",
+    "base-uri 'none'",
+].join('; ')}">`;
+
 const BRIDGE = `<script>
 (function () {
   var pending = {}, next = 1;
@@ -341,12 +358,13 @@ export class Canvas {
     }
 
     renderHtml(art) {
-        const doc = /<head[^>]*>/i.test(art.content)
-            ? art.content.replace(/<head[^>]*>/i, m => m + BRIDGE)
-            : BRIDGE + art.content;
+        // The policy and bridge go first so they apply before any of the app's own
+        // markup; the parser moves them into <head>.
+        const doc = MINIAPP_CSP + BRIDGE + art.content;
         // No allow-same-origin: the app can't read the parent page, cookies or API.
+        // No allow-popups: a popup's URL would be a way to send data out.
         const frame = el('iframe', {
-            class: 'miniapp', sandbox: 'allow-scripts allow-forms allow-modals allow-popups allow-downloads',
+            class: 'miniapp', sandbox: 'allow-scripts allow-forms allow-modals allow-downloads',
             title: art.title,
         });
         frame.srcdoc = doc;

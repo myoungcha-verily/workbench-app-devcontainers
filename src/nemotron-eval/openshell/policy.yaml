@@ -1,0 +1,25 @@
+# Sandbox policy for governed chats. Anything not listed is denied.
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /sbin, /usr, /lib, /lib64, /etc, /proc, /dev/urandom, /dev/random]
+  read_write: [/sandbox, /tmp, /dev/null]
+
+landlock:
+  # Fail closed: the kernel probe passed on Workbench's Flatcar 6.12 VMs.
+  compatibility: hard_requirement
+
+network_policies:
+  # The only way out: the app's SQL broker (SELECT only, allowlisted datasets).
+  workbench_broker:
+    name: workbench_broker
+    endpoints:
+      - host: host.openshell.internal
+        port: 8080
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: {method: POST, path: /broker/sql}
+    binaries:
+      - path: /usr/local/bin/python3.11

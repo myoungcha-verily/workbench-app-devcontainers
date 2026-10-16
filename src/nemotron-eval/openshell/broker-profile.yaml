@@ -1,0 +1,22 @@
+# Provider profile for the SQL broker token. The sandbox only ever sees a
+# placeholder in $WORKBENCH_BROKER_TOKEN; the supervisor swaps in the real
+# token on requests to the broker endpoint and nowhere else.
+id: workbench-broker
+display_name: Workbench SQL broker
+description: Bearer token for the Nemotron Eval Terminal SQL broker
+category: other
+credentials:
+  - name: token
+    env_vars: [WORKBENCH_BROKER_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+endpoints:
+  - host: host.openshell.internal
+    port: 8080
+    protocol: rest
+    enforcement: enforce
+    rules:
+      - allow: {method: POST, path: /broker/sql}
+binaries:
+  - /usr/local/bin/python3.11

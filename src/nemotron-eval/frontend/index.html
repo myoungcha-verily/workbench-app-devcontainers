@@ -36,6 +36,13 @@
             <span>Mode</span>
             <select id="preset-select" class="input"></select>
         </label>
+        <label class="control governed-control" title="Governed: code runs in an NVIDIA OpenShell sandbox with no network except the SQL broker; SQL is SELECT-only on allowlisted datasets; Workbench tools are read-only. Ungoverned: tools run with your full credentials.">
+            <span>Policy</span>
+            <select id="governed-select" class="input">
+                <option value="true">🛡 Governed</option>
+                <option value="false">⚠ Ungoverned</option>
+            </select>
+        </label>
     </div>
     <div class="header-right">
         <button class="status-pill" id="status-pill" title="System status">

@@ -48,6 +48,8 @@ class App {
         (this.options.presets || []).forEach(p => presetSel.append(el('option', { value: p.id }, p.label)));
         presetSel.value = this.prefs.preset;
         document.getElementById('effort-select').value = this.prefs.effort;
+        document.getElementById('governed-select').value = String(this.prefs.governed !== false);
+        this.renderGoverned();
         document.getElementById('show-reasoning').checked = this.prefs.showReasoning;
         document.getElementById('notify-toggle').checked = this.prefs.notify;
         this.loadModels();
@@ -129,7 +131,13 @@ class App {
             tools: document.getElementById('tools-toggle').checked,
             temperature: tempDefault ? null : parseFloat(document.getElementById('temperature').value),
             max_tokens: Number.isFinite(maxTokens) ? maxTokens : null,
+            governed: document.getElementById('governed-select').value !== 'false',
         };
+    }
+
+    renderGoverned() {
+        const governed = document.getElementById('governed-select').value !== 'false';
+        document.body.classList.toggle('ungoverned', !governed);
     }
 
     applySettings(s) {
@@ -147,6 +155,8 @@ class App {
         if (s.temperature !== null && s.temperature !== undefined) document.getElementById('temperature').value = s.temperature;
         this.updateTempLabel();
         document.getElementById('max-tokens').value = s.max_tokens || '';
+        document.getElementById('governed-select').value = String(s.governed !== false);
+        this.renderGoverned();
     }
 
     updateTempLabel() {
@@ -493,6 +503,7 @@ class App {
         $('reasoning-select').addEventListener('change', e => this.savePrefs({ reasoning: e.target.value }));
         $('effort-select').addEventListener('change', e => this.savePrefs({ effort: e.target.value }));
         $('preset-select').addEventListener('change', e => this.savePrefs({ preset: e.target.value }));
+        $('governed-select').addEventListener('change', e => { this.savePrefs({ governed: e.target.value !== 'false' }); this.renderGoverned(); });
         $('new-chat-btn').addEventListener('click', () => { this.showView('chat'); this.chat.newChat(); });
         $('session-search').addEventListener('input', () => this.renderSessions());
         $('prompt-search').addEventListener('input', () => this.renderPrompts());
