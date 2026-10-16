@@ -28,21 +28,25 @@ services:
       # Persist compiled CUDA kernels so warm-up is faster after a restart.
       CUDA_CACHE_PATH: "/data/cuda-cache"
       CUDA_CACHE_MAXSIZE: "4294967296"
-      DATA_DIR: "/data"
-      # Where llm-context writes ~/.claude/CLAUDE.md and skills for this user.
-      APP_USER_HOME: "/home/nemotron"
-      # GGUFs that have no Ollama registry tag are downloaded from here.
+      # ---- Workspace-specific settings: change these when deploying elsewhere ----
+      # Bucket holding the Nemotron GGUF files (models/...gguf); needed for 9B and Bolt.
       MODELS_BUCKET: "cloned-models-wb-meteoric-gourd-5139"
-      # Optional: set to a workspace bucket name to back up finished eval runs.
+      # Optional: bucket name to back up finished eval runs.
       RESULTS_BUCKET: ""
-      # Governed chats (OpenShell pilot): sandbox gateway and SQL broker scope.
-      OPENSHELL_GATEWAY_ENDPOINT: "http://openshell-gateway:8080"
-      OPENSHELL_TELEMETRY_ENABLED: "false"
+      # BigQuery datasets governed chats may query through the SQL broker (comma-separated,
+      # "dataset" or "project.dataset"). Nothing else is reachable from a governed sandbox.
       GOVERNED_DATASETS: "redteam_bhs"
-      # Buckets governed sandboxes may read, with a downscoped read-only token.
+      # Buckets governed sandboxes may read, with a downscoped read-only token (blank = none).
       GOVERNED_BUCKETS: "cloned-synthetic-allofus-demo-wb-meteoric-gourd-5139"
       # The audit trail is copied here every 5 minutes (blank = keep it on the data disk only).
       AUDIT_EXPORT_URI: "gs://eval-benchmark-wb-meteoric-gourd-5139/openshell-pilot/audit"
+      # ---- End of workspace-specific settings ----
+      DATA_DIR: "/data"
+      # Where llm-context writes ~/.claude/CLAUDE.md and skills for this user.
+      APP_USER_HOME: "/home/nemotron"
+      # Governed chats (OpenShell pilot).
+      OPENSHELL_GATEWAY_ENDPOINT: "http://openshell-gateway:8080"
+      OPENSHELL_TELEMETRY_ENABLED: "false"
       APP_NAME: "nemotron-openshell-pilot"
     volumes:
       - .:/workspace:cached

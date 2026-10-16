@@ -4,6 +4,12 @@ Chat, agent and canvas UI for self-hosted NVIDIA Nemotron models in Verily Workb
 Ollama on the app's GPU. The agent can use Workbench (through the Workbench MCP server), query BigQuery,
 and build artifacts — reports, SQL, charts and HTML mini-apps — in a side canvas.
 
+This branch (`openshell-pilot`) adds **governed chats**: the agent's code runs in an
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox that can reach only an allowlisted
+SQL broker and read-only storage, never holds real credentials, and logs every blocked action.
+Each chat is either governed or ungoverned, so the same question can be compared both ways.
+See [Governed chats](#governed-chats-openshell).
+
 ## Features
 
 - **Workbench agent**
@@ -61,19 +67,100 @@ Models that fit the GPU are prepared in the background on first start. Weights a
 volume, and the largest model is pre-loaded so the first chat is fast. Only one model fits in VRAM at a
 time on an A100 40GB, so switching models takes about a minute; the chat says so while it happens.
 
+## Governed chats (OpenShell)
+
+Pick **Policy → Governed** in the header for a governed chat (the 🛡 button opens the sandbox panel). In a governed chat:
+
+| | Ungoverned (how most agents run today) | Governed |
+|---|---|---|
+| `run_python`, `run_shell` | In the app container, as you | In this chat's own OpenShell sandbox: not root, read-only system directories (Landlock), no network of its own |
+| Network | Anything | Only the SQL broker and read-only Cloud Storage for `GOVERNED_BUCKETS`; everything else is denied and logged |
+| Credentials | Your Workbench credentials (`gcloud`, `bq`, `gsutil`, `wb`) | Placeholders only. OpenShell swaps in the real broker token, or a downscoped read-only storage token, on allowed requests |
+| SQL | Any statement your account allows (deletes ask first) | `SELECT` only, `GOVERNED_DATASETS` only, no `EXPORT DATA`, row and byte caps |
+| Workbench tools | All (deletes ask first) | Read-only tools; the `gcloud`/`gsutil`/`bq`/`wb` command tools and all write/delete tools are refused |
+
+What the UI shows:
+
+- A mode banner on every chat and a **where it ran** badge on every step (sandbox, app, broker).
+- **Blocked by NVIDIA OpenShell** cards in plain language, including where the blocked address came from
+  in what the agent read earlier (planted instructions in table descriptions or data are the usual source).
+- In ungoverned chats, **risk flags** for the same events (a real token shown to the model, a request to an
+  address found in the data). These are heuristics; ungoverned mode enforces nothing.
+- **Policy proposals.** When the agent is blocked, OpenShell drafts a narrow rule (one program, host and
+  port). **Approve for this chat** applies it to that sandbox within about 10 seconds; approvals and
+  rejections are audited.
+- The **sandbox panel** (🛡): sandbox status, isolation, the policy in plain English, approved rules and live activity.
+- The **Audit** tab: every governed action across chats (allowed, blocked, not available in the sandbox,
+  approved, rejected), downloadable, and copied to `AUDIT_EXPORT_URI` every 5 minutes.
+- **Run in a new governed/ungoverned chat** re-asks the same question in the other mode.
+
+**Self-test.** Audit → **Run sandbox self-test** runs 13 checks (9 if `GOVERNED_BUCKETS` is blank) in a fresh sandbox: not root, placeholder
+tokens, metadata server / internet / attacker host blocked, broker answers an allowed query and refuses
+another dataset, other app paths blocked, system directories read-only, the storage token reads the
+allowed bucket but not another one and cannot write. All should pass before a demo
+(`POST /api/governance/selftest` returns the raw results).
+
+How it is wired: `docker-compose.yaml` runs the OpenShell 0.1.4 gateway next to the app (Docker driver,
+loopback only, telemetry off) and builds the sandbox image `nemotron-agent-sandbox:0.2` (Python 3.11 with
+pandas and friends pre-installed; there is no `pip` access at runtime). The policy is
+`openshell/policy.yaml`; the storage rule is added at start-up from `GOVERNED_BUCKETS` and written to
+`/data/openshell/`.
+
+Known limits of the pilot: the gateway needs the Docker socket (root on the VM in effect); the
+storage token is derived from your own credentials, because Workbench has no separate agent identity;
+the agent can still *relay* a planted instruction to you in its answer; and OpenShell is version 0.x.
+
+### Red-team kit
+
+`redteam/` holds the prompt-injection tests used in the pilot: `injections.json` (six planted instructions,
+all aimed at `.invalid` hosts that cannot resolve), `plant.sh <project> [--clear]` to apply or remove them
+on a dataset you own, `run_redteam.py <host:port>` to run every scenario governed and ungoverned (the app port is loopback-only, so run it on the app VM, e.g. inside the container against `127.0.0.1:8080`), and
+`summarize.py results.json` for the table. Run it only on a copy of data you are allowed to modify. Result
+files can contain the data the agent read, so keep them inside the workspace.
+
 ## Deploy
 
-1. Create a custom app config pointing at this folder:
-   ```bash
-   wb app config create --name=nemotron-eval-terminal \
-     --git-repo-url=https://github.com/<you>/workbench-app-devcontainers.git \
-     --git-branch=<branch> --dev-container-path=src/nemotron-eval
-   ```
-2. Create the app on a GPU: `a2-highgpu-1g` (A100 40GB) for all three models, or a T4 for the 4B and 9B.
-3. Open the app, or go to `https://workbench.verily.com/app/<APP_UUID>/proxy/8080/`.
+You need a GPU and a bucket with the Nemotron GGUF files.
 
-Settings live in `docker-compose.yaml` (`ENABLED_MODELS`, `MODELS_BUCKET`, `RESULTS_BUCKET`,
-`OLLAMA_CONTEXT_LENGTH`).
+1. **Models.** Make the GGUF files readable from your workspace: reference or copy a bucket that holds
+   `models/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf` and
+   `models/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf` (the 4B comes from the Ollama registry).
+2. **Fork and configure.** Fork this repository and edit the block marked *Workspace-specific settings*
+   in `docker-compose.yaml`:
+
+   | Setting | Set it to |
+   |---|---|
+   | `MODELS_BUCKET` | The bucket name from step 1 (no `gs://`) |
+   | `GOVERNED_DATASETS` | The BigQuery datasets governed chats may query, comma-separated (`dataset` or `project.dataset`) |
+   | `GOVERNED_BUCKETS` | Buckets governed sandboxes may read (blank for none) |
+   | `AUDIT_EXPORT_URI` | `gs://<bucket>/<path>` for the audit copy, or blank to keep it on the app disk |
+   | `RESULTS_BUCKET` | Optional: bucket for eval-run backups |
+
+3. **Create the app config** in your workspace:
+   ```bash
+   wb app config create --name=nemotron-openshell-pilot \
+     --git-repo-url=https://github.com/<you>/workbench-app-devcontainers.git \
+     --git-branch=openshell-pilot --dev-container-path=src/nemotron-eval
+   ```
+4. **Create the app.** An A100 40GB runs all three models; a T4 runs the 4B and 9B only.
+   ```bash
+   wb app create gcp --config=nemotron-openshell-pilot --id=<app-name> \
+     --machine-type=a2-highgpu-1g --accelerator-type=nvidia-tesla-a100 --accelerator-core-count=1 \
+     --data-disk-size=200 --location=us-central1-f
+   ```
+   A100 capacity is often short: if creation fails with *capacity is unavailable*, try
+   `us-central1-a`, `-b` or `-c`, or retry later.
+5. **Open it** from the workspace's Apps page (or the proxy URL that `wb app create` prints). The first
+   start downloads the models into the data disk, about 20 minutes for Bolt; the status chip shows progress.
+6. **Check governance.** Audit → **Run sandbox self-test**; all checks should pass (13, or 9 without `GOVERNED_BUCKETS`). Then pick
+   **Policy → Governed** for a governed chat.
+
+Workspace members can each create their own app from the same config (each app is its own VM and GPU). The app port is bound to the VM's loopback and is reached only through the Workbench proxy:
+do not publish it on the VM's network interface (other VMs in the network could then reach it without
+Workbench sign-in).
+
+Other environment settings: `ENABLED_MODELS` (comma-separated model IDs; default all that fit),
+`OLLAMA_CONTEXT_LENGTH`, and `GOVERNED_MAX_ROWS` (default 500) and `GOVERNED_MAX_BYTES` (default 2 GB) for the broker.
 
 ## Layout
 
@@ -92,7 +179,16 @@ backend/
   sqlrun.py               BigQuery execution (dry-run checks, read-only mode for mini-apps)
   model_manager.py        model download/import, capabilities, warm-up
   store.py                DuckDB: chats, artifacts (versioned), prompts, eval runs
+  executors.py            where run_shell/run_python run: app container or OpenShell sandbox
+  openshell_exec.py       sandboxes, providers, policy rendering, proposals, denial parsing
+  token_minter.py         downscoped read-only storage token (Credential Access Boundary)
+  audit.py                audit trail (/data/audit.jsonl) and export to AUDIT_EXPORT_URI
+  sandbox_helper/         workbench_data.py: query()/list_objects()/read_object() inside the sandbox
 frontend/                 no build step; ES modules + vendored libraries (vendor/SHA256SUMS)
+  js/governance.js        mode banner, blocked/risk cards, proposals, sandbox panel
+openshell/                policy.yaml, broker-profile.yaml, gateway.toml
+sandbox-image/            sandbox workload image (Dockerfile, pre-installed Python packages)
+redteam/                  prompt-injection test kit (see Red-team kit)
 ```
 
 ## Troubleshooting
@@ -103,3 +199,7 @@ frontend/                 no build step; ES modules + vendored libraries (vendor
 | Status shows `context …` | Context generation runs after Workbench login; log in `/tmp/llm-context.log` |
 | A model is stuck in `loading` | `docker logs application-server` (the `[models]` lines) |
 | "error launching your custom container" | On the VM: `sudo journalctl -u devcontainer.service` |
+| Governed chats say OpenShell is unavailable | `docker logs openshell-gateway`; the 🛡 panel shows the last error. Gateway state lives in `/var/lib/openshell` on the VM |
+| Self-test: storage checks missing | `GOVERNED_BUCKETS` is blank, or the token mint failed (🛡 panel shows the error) |
+| Self-test: allowed query fails | The first `GOVERNED_DATASETS` entry does not exist or you cannot read it |
+| App logs from outside the VM | `wb app logs --id=<app-name> --start-time=… --end-time=…` (newest first) |
