@@ -87,9 +87,13 @@ function parseDecision(e) {
     return { program: null, host: null, text: e.target || e.kind };
 }
 
-const REASONS = {
-    'no matching policy': 'This destination is not in the chat\'s policy.',
-};
+// OpenShell's reason codes, in words. L7 denials carry the request after the code.
+function reasonText(reason) {
+    if (!reason) return 'Denied by policy.';
+    if (/no matching policy|transparent_tcp_policy_denied/.test(reason)) return 'This destination is not in the chat\'s policy.';
+    if (/not permitted by policy/.test(reason)) return 'The policy allows this host, but not this request.';
+    return `Denied: ${reason}.`;
+}
 
 // The card shown under a tool call the policy stopped.
 export function blockedCard(chat, entry, blocked) {
@@ -106,7 +110,7 @@ export function blockedCard(chat, entry, blocked) {
         el('div', { class: 'policy-block-title' }, '🛡 Blocked by NVIDIA OpenShell'),
         events.map(e => el('div', { class: 'block-line' },
             `The agent's ${e.program ? `${e.program} code` : 'code'} tried to ${e.text}. `,
-            el('strong', {}, REASONS[e.reason] || (e.reason ? `Denied: ${e.reason}.` : 'Denied by policy.')),
+            el('strong', {}, reasonText(e.reason)),
             ' Nothing was sent.')),
         sourceBox(source),
         el('details', { class: 'small' }, el('summary', {}, 'Technical detail'),
