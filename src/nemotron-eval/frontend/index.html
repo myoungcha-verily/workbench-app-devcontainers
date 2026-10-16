@@ -50,6 +50,7 @@
         </button>
         <button class="btn icon" id="settings-btn" title="Settings">⚙</button>
         <button class="btn icon" id="theme-btn" title="Toggle light/dark theme">◐</button>
+        <button class="btn icon" id="sandbox-btn" title="OpenShell sandbox panel">🛡</button>
         <button class="btn icon" id="canvas-btn" title="Toggle canvas (Ctrl+.)">🎨</button>
         <button class="btn icon" id="help-btn" title="Shortcuts and commands">?</button>
     </div>
@@ -113,6 +114,7 @@
                 <button class="btn tiny ghost" id="export-btn" title="Download chat as Markdown">⬇ Export</button>
                 <button class="btn tiny ghost" id="save-chat-btn" title="Save chat to a workspace bucket">☁ Save to bucket</button>
             </div>
+            <div class="mode-banner" id="mode-banner"></div>
             <div class="chat-messages" id="chat-messages"></div>
             <div class="composer">
                 <div class="slash-menu" id="slash-menu"></div>
@@ -150,6 +152,12 @@
             <div id="eval-content" class="eval-content"></div>
         </section>
     </main>
+
+    <aside class="sandbox-panel" id="sandbox-panel">
+        <div class="canvas-head"><strong class="sandbox-title">🛡 NVIDIA OpenShell</strong><span class="spacer"></span>
+            <button class="btn icon sandbox-close" title="Close">✕</button></div>
+        <div class="sandbox-body"></div>
+    </aside>
 
     <aside class="canvas" id="canvas">
         <div class="canvas-head">

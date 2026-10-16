@@ -1,6 +1,7 @@
 import { api, copyText, el, formatNumber, toast, wsUrl } from './api.js';
 import { renderMarkdown } from './markdown.js';
 import { resultTable } from './canvas.js';
+import { blockedCard, maskTokens, missingCard, placeOf, riskCards } from './governance.js';
 
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 
@@ -62,6 +63,7 @@ export class Chat {
         this.closeSocket();
         this.cards.clear();
         this.showWelcome();
+        this.app.renderGoverned();
         document.getElementById('chat-title').textContent = 'New chat';
         this.app.canvas.loadSession(null);
         this.app.onSessionChanged(null);
@@ -103,6 +105,7 @@ export class Chat {
     render(session) {
         this.messages.innerHTML = '';
         this.cards.clear();
+        this.historyGoverned = session.settings?.governed !== false;
         let turn = null;
         const artifactTitles = new Map();
         session.messages.forEach((m, index) => {
@@ -111,7 +114,7 @@ export class Chat {
                 this.messages.append(this.userBubble(m, index));
                 return;
             }
-            if (!turn) turn = this.newTurn(m.model_id || session.model_id);
+            if (!turn) turn = this.newTurn(m.model_id || session.model_id, this.historyGoverned);
             if (m.role === 'assistant') {
                 if (m.thinking) this.addThinking(turn, m.thinking, { open: false });
                 if (m.meta?.notice) turn.body.append(el('div', { class: 'notice' }, m.content));
@@ -121,7 +124,7 @@ export class Chat {
                 if (m.tokens) this.finishTurn(turn, { tokens: m.tokens, latency_ms: m.latency_ms, tokens_per_s: m.meta?.tokens_per_s, context_tokens: m.meta?.context_tokens });
             } else if (m.role === 'tool') {
                 const isError = !!m.meta?.is_error;
-                this.updateToolCard(m.tool_call_id, { ok: !isError, result: m.content, duration_ms: m.meta?.duration_ms, name: m.tool_name, blocked: m.meta?.blocked });
+                this.updateToolCard(m.tool_call_id, { ok: !isError, result: m.content, duration_ms: m.meta?.duration_ms, name: m.tool_name, blocked: m.meta?.blocked, missing: m.meta?.missing });
                 if (m.meta?.artifact_id) {
                     const art = this.app.canvas.artifacts.get(m.meta.artifact_id);
                     this.artifactChip(turn, { id: m.meta.artifact_id, title: art?.title || artifactTitles.get(m.meta.artifact_id) || m.meta.artifact_id, type: art?.type || '' });
@@ -131,6 +134,7 @@ export class Chat {
         const lastTurn = [...this.messages.querySelectorAll('.turn')].pop();
         if (lastTurn) this.addRegenerate(lastTurn);
         this.scrollToBottom(true);
+        this.app.renderGoverned();
     }
 
     userBubble(m, index) {
@@ -145,20 +149,24 @@ export class Chat {
             el('div', { class: 'message-actions' },
                 el('button', { class: 'btn tiny ghost', title: 'Edit and resend', onclick: () => this.startEdit(bubble, text) }, '✎ Edit'),
                 el('button', { class: 'btn tiny ghost', onclick: e => copyText(text, e.target) }, 'Copy'),
+                el('button', { class: 'btn tiny ghost other-mode', title: 'Same prompt in a new chat with the other policy, for comparison',
+                    onclick: () => this.app.runInOtherMode(text) },
+                    this.app.currentSettings().governed ? '↔ Run in a new ungoverned chat' : '↔ Run in a new governed chat'),
             ),
         );
         return bubble;
     }
 
-    newTurn(modelId) {
+    newTurn(modelId, governed = true) {
         const body = el('div', { class: 'turn-body' });
         const footer = el('div', { class: 'turn-footer' });
-        const node = el('div', { class: 'message assistant turn' },
-            el('div', { class: 'turn-header' }, el('span', { class: 'avatar' }, '⚡'), el('span', { class: 'model-name' }, modelId || 'assistant')),
+        const node = el('div', { class: `message assistant turn ${governed ? 'gov' : 'risk'}` },
+            el('div', { class: 'turn-header' }, el('span', { class: 'avatar' }, '⚡'), el('span', { class: 'model-name' }, modelId || 'assistant'),
+                el('span', { class: `turn-mode ${governed ? 'gov' : 'risk'}` }, governed ? '🛡 governed' : '⚠ ungoverned')),
             body, footer,
         );
         this.messages.append(node);
-        return { node, body, footer, segment: null, raw: '', thinking: null, status: null, modelId };
+        return { node, body, footer, segment: null, raw: '', thinking: null, status: null, modelId, governed };
     }
 
     addSegment(turn) {
@@ -183,19 +191,21 @@ export class Chat {
         const status = el('span', { class: 'tool-status running' }, '');
         const detail = el('div', { class: 'tool-detail' },
             el('div', { class: 'tool-label' }, 'Arguments'),
-            el('pre', { class: 'tool-args' }, JSON.stringify(call.arguments, null, 2)),
+            el('pre', { class: 'tool-args' }, maskTokens(JSON.stringify(call.arguments, null, 2))),
         );
+        const place = placeOf(call.name, turn.governed !== false);
         const card = el('details', { class: 'tool-card' },
             el('summary', {},
                 status,
                 el('span', { class: 'tool-name' }, call.name),
-                el('span', { class: 'tool-summary' }, argsSummary(call.name, call.arguments)),
+                el('span', { class: `tool-place ${place.cls}`, title: place.title }, place.label),
+                el('span', { class: 'tool-summary' }, maskTokens(argsSummary(call.name, call.arguments))),
                 el('span', { class: 'tool-time' }),
             ),
             detail,
         );
         turn.body.append(card);
-        this.cards.set(call.id, { card, status, detail, call });
+        this.cards.set(call.id, { card, status, detail, call, governed: turn.governed !== false });
         turn.segment = null;
         return card;
     }
@@ -209,39 +219,36 @@ export class Chat {
         entry.card.querySelector('.tool-time').textContent = ev.duration_ms !== undefined ? `${(ev.duration_ms / 1000).toFixed(1)}s` : '';
         entry.detail.querySelector('.tool-result-wrap')?.remove();
         const wrap = el('div', { class: 'tool-result-wrap' }, el('div', { class: 'tool-label' }, ev.ok ? 'Result' : 'Error'));
-        // Outside the <details> so it shows while the card is collapsed.
+        entry.result = ev.result || '';
+        // Outside the <details> so these show while the card is collapsed.
         entry.block?.remove();
+        (entry.risks || []).forEach(r => r.remove());
         if (ev.blocked) {
             entry.card.classList.add('blocked');
-            const events = ev.blocked.events || [];
-            const layer = ev.blocked.layer === 'openshell' ? 'NVIDIA OpenShell sandbox' : 'Workbench governance policy';
-            entry.block = el('div', { class: 'policy-block' },
-                el('div', { class: 'policy-block-title' }, `🛡 Blocked by ${layer}`),
-                events.length
-                    ? el('ul', {}, events.map(e => el('li', {}, e.summary)))
-                    : el('div', {}, ev.blocked.rule || ''),
-                el('button', { class: 'btn tiny ghost', onclick: () => this.app.audit.show({ sessionId: this.sessionId }) }, 'View in audit trail'),
-            );
+            entry.block = blockedCard(this, entry, ev.blocked);
             entry.card.after(entry.block);
             if (ev.blocked.layer === 'openshell') this.watchProposals();
         } else if (ev.missing) {
-            entry.block = el('div', { class: 'policy-block missing' },
-                el('div', { class: 'policy-block-title' }, `🛡 Not available in the OpenShell sandbox: ${ev.missing.join(', ')}`),
-                el('div', { class: 'small' }, 'The sandbox has no such tool, so the step could not run. Recorded in the audit trail.'),
-            );
+            entry.block = missingCard(ev.missing);
             entry.card.after(entry.block);
+        }
+        entry.risks = riskCards(this, entry, ev, entry.governed);
+        if (entry.risks.length) {
+            entry.card.classList.add('risky');
+            (entry.block || entry.card).after(...entry.risks);
         }
         if (ev.sql_result) {
             const r = ev.sql_result;
             wrap.append(el('div', { class: 'muted small' }, `${r.rows.length} of ${formatNumber(r.total_rows)} rows`), resultTable(r.columns, r.rows, { maxRows: 100 }));
         } else {
-            wrap.append(el('pre', { class: 'tool-result' }, ev.result || ''));
+            wrap.append(el('pre', { class: 'tool-result' }, maskTokens(ev.result || '')));
         }
         if (ev.name === 'run_sql' && entry.call.arguments?.sql) {
             wrap.append(el('button', { class: 'btn tiny', onclick: () => this.app.canvas.create('sql', 'Query', entry.call.arguments.sql) }, 'Open query in canvas'));
         }
         entry.detail.append(wrap);
-        if (!ev.ok) entry.card.open = true;
+        // The policy or risk card tells the story; the raw output stays one click away.
+        if (!ev.ok && !entry.block && !entry.risks.length) entry.card.open = true;
     }
 
     // OpenShell drafts a rule for each blocked connection about 10 s later.
@@ -321,14 +328,15 @@ export class Chat {
         turn.footer.innerHTML = '';
         const ctx = stats.context_tokens ? `ctx ${formatNumber(stats.context_tokens)} / ${formatNumber(this.app.options?.num_ctx || 0)}` : null;
         const text = () => [...turn.body.querySelectorAll('.segment')].map(s => s.innerText).join('\n\n');
-        turn.footer.append(
+        // Element.append would print a null as the text "null".
+        turn.footer.append(...[
             stats.tokens ? el('span', {}, `${formatNumber(stats.tokens)} tokens`) : null,
             stats.tokens_per_s ? el('span', {}, `${stats.tokens_per_s} tok/s`) : null,
             stats.latency_ms ? el('span', {}, `${(stats.latency_ms / 1000).toFixed(1)}s`) : null,
             ctx ? el('span', { title: 'Context window used' }, ctx) : null,
             el('span', { class: 'spacer' }),
             el('button', { class: 'btn tiny ghost', onclick: e => copyText(text(), e.target) }, 'Copy'),
-        );
+        ].filter(Boolean));
     }
 
     addRegenerate(turnNode) {
@@ -400,7 +408,9 @@ export class Chat {
         this.ensureSessionId();
         this.setRunning(true);
         this.turn = null;
-        this.wsSend({ ...payload, settings: this.app.currentSettings() });
+        const settings = this.app.currentSettings();
+        this.liveGoverned = settings.governed;
+        this.wsSend({ ...payload, settings });
         this.app.onSessionChanged(this.sessionId, { pending: true });
         this.scrollToBottom(true);
     }
@@ -455,7 +465,7 @@ export class Chat {
     // ------------------------------------------------------------ live events
 
     currentTurn() {
-        if (!this.turn) this.turn = this.newTurn(this.app.currentSettings().model_id);
+        if (!this.turn) this.turn = this.newTurn(this.app.currentSettings().model_id, this.liveGoverned ?? this.app.currentSettings().governed);
         return this.turn;
     }
 
@@ -504,6 +514,8 @@ export class Chat {
             case 'tool_result':
                 this.updateToolCard(ev.id, ev);
                 if (ev.artifact) this.artifactChip(turn, ev.artifact);
+                this.app.renderGoverned();
+                this.app.sandbox.refresh();
                 this.scrollToBottom();
                 break;
             case 'artifact':

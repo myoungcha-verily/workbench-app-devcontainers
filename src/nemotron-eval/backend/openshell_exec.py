@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import audit
+import sqlrun
 import token_minter
 from executors import COMMAND_TIMEOUT_S, format_result
 
@@ -279,13 +280,35 @@ class OpenShellExecutor:
                 audit.record(session_id, "openshell", "deny", event["kind"], event["summary"], {"raw": event["raw"]})
         return events
 
-    async def proposals(self, session_id: str) -> List[Dict]:
-        """Pending rules OpenShell drafted from this chat's blocked connections."""
+    async def proposals(self, session_id: str, status: str = "pending") -> List[Dict]:
+        """Rules OpenShell drafted from this chat's blocked connections (pending, approved or rejected)."""
         name = sandbox_name(session_id)
         if not self.ready.get(name):
             return []
-        r = await self.cli("rule", "get", name, "--status", "pending", timeout=30)
-        return parse_rules(r["stdout"]) if r["exit_code"] == 0 else []
+        r = await self.cli("rule", "get", name, "--status", status, timeout=30)
+        return parse_rules(r["stdout"], status) if r["exit_code"] == 0 else []
+
+    async def describe(self, session_id: str) -> Dict:
+        """What the chat's sandbox is and may do, for the Sandbox panel."""
+        name = sandbox_name(session_id)
+        allowed = [{"what": "SQL broker", "detail": "POST /broker/sql on the app: SELECT only, row and byte caps",
+                    "scope": "datasets: " + ", ".join(sqlrun.GOVERNED_DATASETS), "program": "python3.11"}]
+        if token_minter.BUCKETS:
+            allowed.append({"what": "Cloud Storage, read-only", "detail": "GET objects with a downscoped token",
+                            "scope": "buckets: " + ", ".join(token_minter.BUCKETS), "program": "python3.11"})
+        approved = await self.proposals(session_id, "approved") if self.ready.get(name) else []
+        return {
+            "available": self.available and self.status["provider"] == "ready",
+            "status": self.status,
+            "sandbox": {"name": name, "created": bool(self.ready.get(name)), "image": IMAGE},
+            "isolation": [
+                "Runs as uid 1500, not root; system directories are read-only (Landlock, required)",
+                "No network of its own: every connection goes through the OpenShell proxy, which checks it against the policy",
+                "No real credentials: the broker and storage tokens are placeholders the proxy fills in for allowed requests only",
+            ],
+            "allowed": allowed,
+            "approved": approved,
+        }
 
     async def decide(self, session_id: str, chunk_id: str, approve: bool, reason: str = "") -> Dict:
         name = sandbox_name(session_id)
@@ -313,7 +336,7 @@ class OpenShellExecutor:
         await self.cli("sandbox", "delete", name, timeout=60)
 
 
-def parse_rules(text: str) -> List[Dict]:
+def parse_rules(text: str, status: str = "pending") -> List[Dict]:
     """Parses `openshell rule get` output (plain text; the CLI has no JSON output)."""
     chunks, current = [], None
     for line in _ANSI.sub("", text).splitlines():
@@ -324,4 +347,4 @@ def parse_rules(text: str) -> List[Dict]:
         elif current is not None and key in ("Status", "Rule", "Binary", "Confidence", "Rationale", "Security",
                                              "Prover", "Application", "Endpoints", "Binaries", "Hits"):
             current[key.lower()] = value.strip()
-    return [c for c in chunks if c.get("status", "pending") == "pending"]
+    return [c for c in chunks if c.get("status", status) == status]

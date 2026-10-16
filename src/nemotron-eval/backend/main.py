@@ -545,6 +545,12 @@ class ProposalDecision(Base):
     reason: str = ""
 
 
+@app.get("/api/governance/session")
+async def governance_session(session_id: str):
+    """The chat's sandbox, its policy in plain terms, and rules approved in it."""
+    return await sandbox.describe(session_id)
+
+
 @app.get("/api/governance/proposals")
 async def governance_proposals(session_id: str):
     """Rules OpenShell drafted from this chat's blocked connections, awaiting the user."""

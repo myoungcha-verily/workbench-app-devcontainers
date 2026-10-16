@@ -3,6 +3,7 @@ import { renderMarkdown } from './markdown.js';
 import { Canvas } from './canvas.js';
 import { Chat } from './chat.js';
 import { AuditView, CompareView, EvalView } from './views.js';
+import { renderBanner, SandboxPanel } from './governance.js';
 
 const PREFS_KEY = 'nemotron-eval-prefs';
 
@@ -37,6 +38,7 @@ class App {
         this.compare = new CompareView(this);
         this.evalView = new EvalView(this);
         this.audit = new AuditView(this);
+        this.sandbox = new SandboxPanel(this);
         this.applyTheme(this.prefs.theme);
         this.bind();
         this.init();
@@ -139,6 +141,24 @@ class App {
     renderGoverned() {
         const governed = document.getElementById('governed-select').value !== 'false';
         document.body.classList.toggle('ungoverned', !governed);
+        if (!this.chat) return;
+        renderBanner(this.chat, governed);
+        this.chat.messages.querySelectorAll('.other-mode').forEach(b => {
+            b.textContent = governed ? '↔ Run in a new ungoverned chat' : '↔ Run in a new governed chat';
+        });
+        this.sandbox?.refresh();
+    }
+
+    // The same prompt in a new chat with the other policy, for side-by-side comparison.
+    runInOtherMode(text) {
+        if (this.chat.running) return toast('Stop the current reply first.', 'warn');
+        const select = document.getElementById('governed-select');
+        select.value = select.value === 'false' ? 'true' : 'false';
+        this.savePrefs({ governed: select.value !== 'false' });
+        this.showView('chat');
+        this.chat.newChat();
+        this.chat.input.value = text;
+        this.chat.submit();
     }
 
     applySettings(s) {
