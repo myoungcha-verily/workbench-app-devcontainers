@@ -35,6 +35,7 @@ BROKER_URL = "http://host.openshell.internal:8080/broker"
 #   HTTP:POST [MED] DENIED POST http://host:8080/path [policy:x engine:opa]
 _DECISION = re.compile(r"\b(NET|HTTP):(\w+) \[\w+\] (ALLOWED|DENIED) (.*)")
 _REASON = re.compile(r"\[reason:([^\]]*)\]")
+_TIMESTAMP = re.compile(r"^\[(\d+(?:\.\d+)?)\]")
 
 
 def sandbox_name(session_id: str) -> str:
@@ -171,6 +172,10 @@ class OpenShellExecutor:
         for line in r["stdout"].splitlines():
             m = _DECISION.search(line)
             if not m or m.group(3) != "DENIED":
+                continue
+            # Lines start with an epoch timestamp: "[1792118560.650] [sandbox] ..."
+            ts = _TIMESTAMP.match(line)
+            if ts and float(ts.group(1)) < since - 0.5:
                 continue
             detail = m.group(4)
             reason = _REASON.search(detail)
