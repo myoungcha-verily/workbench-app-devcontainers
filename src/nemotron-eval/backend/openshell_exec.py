@@ -55,12 +55,14 @@ class OpenShellExecutor:
 
     async def cli(self, *args: str, stdin: str = "", timeout: float = 120) -> Dict:
         env = {**os.environ, "OPENSHELL_GATEWAY_ENDPOINT": GATEWAY, "NO_COLOR": "1"}
+        # No stdin pipe unless there is input: writing to a pipe the CLI never
+        # reads fails once it exits.
         proc = await asyncio.create_subprocess_exec(
-            CLI, *args, env=env, stdin=asyncio.subprocess.PIPE,
+            CLI, *args, env=env, stdin=asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         try:
-            out, err = await asyncio.wait_for(proc.communicate(stdin.encode()), timeout)
+            out, err = await asyncio.wait_for(proc.communicate(stdin.encode() if stdin else None), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -69,6 +71,13 @@ class OpenShellExecutor:
                 "exit_code": proc.returncode, "timed_out": False}
 
     async def setup(self) -> None:
+        try:
+            await self._setup()
+        except Exception as e:
+            self.status.update(error=f"setup failed: {type(e).__name__}: {e}")
+            print(f"[openshell] setup failed: {e!r}", flush=True)
+
+    async def _setup(self) -> None:
         """Import the broker profile and (re)create the provider with this run's token."""
         if not self.available:
             self.status.update(gateway="unavailable", error="OpenShell CLI or gateway endpoint missing")
@@ -86,9 +95,11 @@ class OpenShellExecutor:
         if r["exit_code"] != 0 and "exist" not in (r["stderr"] + r["stdout"]).lower():
             self.status.update(provider="profile import failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
             return
-        await self.cli("provider", "delete", PROVIDER)
-        r = await self.cli("provider", "create", "--name", PROVIDER, "--type", "workbench-broker",
-                           "--credential", f"WORKBENCH_BROKER_TOKEN={self.token}")
+        credential = f"WORKBENCH_BROKER_TOKEN={self.token}"
+        r = await self.cli("provider", "create", "--name", PROVIDER, "--type", "workbench-broker", "--credential", credential)
+        if r["exit_code"] != 0 and "exist" in (r["stderr"] + r["stdout"]).lower():
+            # Gateway state outlives app restarts: rotate the token instead.
+            r = await self.cli("provider", "update", PROVIDER, "--credential", credential, "--wait")
         if r["exit_code"] != 0:
             self.status.update(provider="create failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
             return
@@ -150,6 +161,7 @@ class OpenShellExecutor:
 
     async def denials(self, session_id: str, since: float) -> List[Dict]:
         """DENIED decisions logged by the sandbox's supervisor since `since`."""
+        await asyncio.sleep(1.0)  # decisions reach the gateway's log shortly after the exec returns
         seconds = max(5, int(time.time() - since) + 5)
         r = await self.cli("logs", sandbox_name(session_id), "--since", f"{seconds}s", "--source", "sandbox",
                            "-n", "500", timeout=30)
@@ -164,7 +176,10 @@ class OpenShellExecutor:
             event = {"kind": f"{m.group(1)}:{m.group(2)}", "target": target,
                      "reason": reason.group(1) if reason else "", "raw": line.strip()[-400:]}
             event["summary"] = f"{event['kind']} {target}" + (f" ({event['reason']})" if event["reason"] else "")
-            if event not in events:
+            # A DNS refusal is followed by the connection denial for the same host.
+            if event["kind"] == "NET:REFUSE":
+                continue
+            if all(e["target"] != target for e in events):
                 events.append(event)
                 audit.record(session_id, "openshell", "deny", event["kind"], event["summary"], {"raw": event["raw"]})
         return events
