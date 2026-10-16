@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
     spawn(mcp.refresh(force=True))
     spawn(catalog.refresh_loop(mcp))
     spawn(sandbox.setup())
+    spawn(audit.export_loop(os.environ.get("APP_NAME", "nemotron-eval")))
     yield
 
 
@@ -518,17 +519,20 @@ async def broker_sql(body: BrokerRequest, request: Request):
     """SQL broker for code running in governed sandboxes. The sandbox only has a
     placeholder for this token; its OpenShell supervisor adds the real one."""
     supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    # The header is set by the sandbox, so it can be spoofed between chats; it is used for attribution only.
+    session_id = sandbox.session_for(request.headers.get("x-workbench-sandbox", "")[:40])
     if not secrets.compare_digest(supplied, sandbox.token):
-        audit.record("-", "broker", "deny", "broker_sql", "missing or wrong broker token", {"sql": body.sql})
+        audit.record(session_id, "broker", "deny", "broker_sql", "missing or wrong broker token", {"sql": body.sql})
         raise HTTPException(401, "invalid broker token")
     try:
         result = await sqlrun.run_governed(body.sql, body.max_rows)
     except sqlrun.PolicyDenied as e:
-        audit.record("sandbox", "broker", "deny", "broker_sql", str(e), {"sql": body.sql})
+        audit.record(session_id, "broker", "deny", "broker_sql", str(e), {"sql": body.sql})
         raise HTTPException(403, f"Blocked by policy: {e}")
     except Exception as e:
+        audit.record(session_id, "broker", "fail", "broker_sql", sqlrun.friendly_error(e)[:300], {"sql": body.sql})
         raise HTTPException(400, sqlrun.friendly_error(e))
-    audit.record("sandbox", "broker", "allow", "broker_sql", f"{result['bytes_processed']} bytes", {"sql": body.sql})
+    audit.record(session_id, "broker", "allow", "broker_sql", f"{result['bytes_processed']} bytes", {"sql": body.sql})
     return result
 
 
@@ -546,6 +550,7 @@ async def governance():
         "max_rows": sqlrun.GOVERNED_MAX_ROWS,
         "policy": (APP_ROOT / "openshell" / "policy.yaml").read_text() if (APP_ROOT / "openshell" / "policy.yaml").exists() else "",
         "denied_tools": sorted(n for n in mcp.by_name if not tools.governed_allows(n)),
+        "audit_export": audit.export_status,
     }
 
 

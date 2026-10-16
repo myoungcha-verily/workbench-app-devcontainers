@@ -2,7 +2,7 @@ import { api, ApiError, download, el, formatDate, prompt, toast } from './api.js
 import { renderMarkdown } from './markdown.js';
 import { Canvas } from './canvas.js';
 import { Chat } from './chat.js';
-import { CompareView, EvalView } from './views.js';
+import { AuditView, CompareView, EvalView } from './views.js';
 
 const PREFS_KEY = 'nemotron-eval-prefs';
 
@@ -36,6 +36,7 @@ class App {
         this.chat = new Chat(this);
         this.compare = new CompareView(this);
         this.evalView = new EvalView(this);
+        this.audit = new AuditView(this);
         this.applyTheme(this.prefs.theme);
         this.bind();
         this.init();
@@ -369,6 +370,7 @@ class App {
         document.getElementById('chat-view').hidden = name !== 'chat';
         document.getElementById('compare-view').hidden = name !== 'compare';
         document.getElementById('eval-view').hidden = name !== 'eval';
+        document.getElementById('audit-view').hidden = name !== 'audit';
     }
 
     applyTheme(theme) {

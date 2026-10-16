@@ -281,6 +281,23 @@ body.sidebar-collapsed .sidebar { display: none; }
 .policy-block { border: 1px solid #2e8b57; border-left-width: 4px; border-radius: 6px; margin: -4px 0 8px; padding: 6px 10px; background: rgba(46, 139, 87, 0.12); font-size: 13px; }
 .policy-block-title { font-weight: 600; color: #3cb371; }
 .policy-block ul { margin: 4px 0 0 18px; padding: 0; }
+.policy-block .btn { margin-top: 4px; }
+.policy-block.missing { border-color: #8a7f2e; background: rgba(138, 127, 46, 0.12); }
+.policy-block.missing .policy-block-title { color: #c9b84a; }
+.audit-summary { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+.audit-stat { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px; font-size: 13px; }
+.audit-stat b { font-size: 18px; display: block; }
+.audit-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.audit-table th, .audit-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.audit-table td.mono { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; max-width: 520px; }
+.audit-table tr.deny td:first-child { border-left: 3px solid #3cb371; }
+.audit-table tr.fail td:first-child { border-left: 3px solid #c9b84a; }
+.decision { font-size: 11px; padding: 0 6px; border-radius: 999px; white-space: nowrap; }
+.decision.deny { background: rgba(46, 139, 87, 0.2); color: #3cb371; }
+.decision.fail { background: rgba(138, 127, 46, 0.2); color: #c9b84a; }
+.decision.allow { background: var(--bg-3, rgba(127, 127, 127, 0.15)); color: var(--fg-2); }
+.decision.info { color: var(--fg-2); }
+.selftest-row.pass td:first-child { border-left: 3px solid #3cb371; }
 .governed-control select { font-weight: 600; }
 body.ungoverned .governed-control select { color: var(--warn); border-color: var(--warn); }
 .tool-status { width: 14px; text-align: center; flex-shrink: 0; }

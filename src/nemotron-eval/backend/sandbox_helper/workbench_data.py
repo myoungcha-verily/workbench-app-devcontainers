@@ -20,7 +20,9 @@ def query(sql, max_rows=10000):
     request = urllib.request.Request(
         broker.rstrip("/") + "/sql",
         data=json.dumps({"sql": sql, "max_rows": max_rows}).encode(),
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ.get("WORKBENCH_BROKER_TOKEN", "")},
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ.get("WORKBENCH_BROKER_TOKEN", ""),
+                 # Attribution only: the broker's audit names the chat. Not an authorization input.
+                 "X-Workbench-Sandbox": os.environ.get("WORKBENCH_SANDBOX", "")},
     )
     try:
         with urllib.request.urlopen(request, timeout=300) as response:

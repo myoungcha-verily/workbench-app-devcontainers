@@ -265,6 +265,9 @@ class Turn:
             self.error_streak = 0
 
         duration_ms = int((time.time() - started) * 1000)
+        if self.governed and not is_error and name not in ("run_shell", "run_python", "run_sql"):
+            # Code and SQL are logged where they run; this covers the read-only Workbench tools.
+            audit.record(self.session.id, "app", "allow", name, f"{duration_ms} ms", args)
         # One line per tool call, so `wb app logs` shows what the agent did.
         print(f"[agent] {self.session.id} {self.settings.model_id} {name} "
               f"{'error' if is_error else 'ok'} {duration_ms}ms {tools.dumps(args)[:160]}", flush=True)
@@ -272,7 +275,7 @@ class Turn:
             role="tool", content=tools.truncate(text, TOOL_RESULT_CHARS_MODEL), tool_name=name, tool_call_id=call_id,
             meta={"is_error": is_error, "duration_ms": duration_ms,
                   **({"artifact_id": extra["artifact"]["id"]} if "artifact" in extra else {}),
-                  **({"blocked": extra["blocked"]} if "blocked" in extra else {})},
+                  **{k: extra[k] for k in ("blocked", "missing") if k in extra}},
         ))
         await self.emit({
             "type": "tool_result", "id": call_id, "name": name, "ok": not is_error, "duration_ms": duration_ms,
@@ -308,7 +311,7 @@ class Turn:
                 result = await executor.shell(sid, str(args.get("command", "")))
             else:
                 result = await executor.python(sid, str(args.get("code", "")))
-            extra = {"blocked": result["blocked"]} if result.get("blocked") else {}
+            extra = {k: result[k] for k in ("blocked", "missing") if result.get(k)}
             return result["text"], result["exit_code"] != 0, extra
         if name == "run_sql" and self.governed:
             result = await sqlrun.run_governed(args.get("sql", ""), int(args.get("max_rows") or 50))

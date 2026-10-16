@@ -219,6 +219,13 @@ export class Chat {
                 events.length
                     ? el('ul', {}, events.map(e => el('li', {}, e.summary)))
                     : el('div', {}, ev.blocked.rule || ''),
+                el('button', { class: 'btn tiny ghost', onclick: () => this.app.audit.show({ sessionId: this.sessionId }) }, 'View in audit trail'),
+            );
+            entry.card.after(entry.block);
+        } else if (ev.missing) {
+            entry.block = el('div', { class: 'policy-block missing' },
+                el('div', { class: 'policy-block-title' }, `🛡 Not available in the OpenShell sandbox: ${ev.missing.join(', ')}`),
+                el('div', { class: 'small' }, 'The sandbox has no such tool, so the step could not run. Recorded in the audit trail.'),
             );
             entry.card.after(entry.block);
         }

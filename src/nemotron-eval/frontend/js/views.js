@@ -1,4 +1,4 @@
-import { api, el, formatDate, formatNumber, toast, wsUrl } from './api.js';
+import { api, download, el, formatDate, formatNumber, toast, wsUrl } from './api.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 
 export class CompareView {
@@ -142,5 +142,101 @@ export class EvalView {
         content.append(el('p', { class: 'muted small' }, 'Scores are heuristics (length, has code block, exact match when set) for smoke-testing, not a quality measure.'), grid);
         if (['pending', 'running'].includes(run.status)) this.timer = setTimeout(() => this.show(runId), 4000);
         this.loadRuns();
+    }
+}
+
+const LAYERS = { openshell: 'OpenShell sandbox', broker: 'SQL broker', app: 'App policy' };
+const DECISIONS = { deny: 'blocked', fail: 'not available', allow: 'allowed', info: 'info' };
+
+export class AuditView {
+    constructor(app) {
+        this.app = app;
+        this.events = [];
+        const $ = id => document.getElementById(id);
+        $('audit-open').addEventListener('click', () => this.show());
+        $('audit-refresh').addEventListener('click', () => this.show(this.filter));
+        $('audit-close').addEventListener('click', () => app.showView('chat'));
+        $('audit-selftest').addEventListener('click', () => this.selftest());
+        $('audit-download').addEventListener('click', () =>
+            download('audit.jsonl', this.events.map(e => JSON.stringify(e)).join('\n') + '\n', 'application/x-ndjson'));
+    }
+
+    async show({ sessionId } = {}) {
+        const onlyChat = sessionId || (document.getElementById('audit-this-chat').checked ? this.app.chat.sessionId : null);
+        this.filter = { sessionId: onlyChat };
+        const decisions = new Set([...document.querySelectorAll('#audit-decisions input:checked')].map(i => i.value));
+        this.app.showView('audit');
+        const content = document.getElementById('audit-content');
+        content.innerHTML = '<div class="muted small"><span class="spinner"></span> loading…</div>';
+        try {
+            const [events, gov] = await Promise.all([
+                api(`api/audit?limit=2000${onlyChat ? `&session_id=${encodeURIComponent(onlyChat)}` : ''}`),
+                api('api/governance'),
+            ]);
+            this.events = events;
+            const shown = events.filter(e => decisions.has(e.decision));
+            const count = d => events.filter(e => e.decision === d).length;
+            const chats = new Set(events.map(e => e.session_id)).size;
+            document.getElementById('audit-title').textContent = onlyChat ? `Audit trail — chat ${onlyChat}` : 'Audit trail — all chats';
+            const os = gov.openshell || {};
+            const exp = gov.audit_export || {};
+            content.innerHTML = '';
+            content.append(
+                el('div', { class: 'audit-summary' },
+                    el('div', { class: 'audit-stat' }, el('b', {}, String(count('deny'))), 'blocked by policy'),
+                    el('div', { class: 'audit-stat' }, el('b', {}, String(count('fail'))), 'not available in sandbox'),
+                    el('div', { class: 'audit-stat' }, el('b', {}, String(count('allow'))), 'allowed actions'),
+                    el('div', { class: 'audit-stat' }, el('b', {}, String(chats)), onlyChat ? 'chat' : 'chats'),
+                    el('div', { class: 'audit-stat' }, el('b', {}, os.gateway === 'connected' && os.provider === 'ready' ? '✓' : '✗'),
+                        `OpenShell ${os.gateway || 'unknown'}${os.error ? ` (${os.error})` : ''}`),
+                    el('div', { class: 'audit-stat' }, el('b', {}, exp.uri ? (exp.error ? '✗' : '✓') : '–'),
+                        exp.uri ? `copied to ${exp.uri}${exp.last_export ? ` at ${formatDate(exp.last_export * 1000)}` : ' (every 5 min)'}` : 'kept on the app disk only'),
+                ),
+                el('p', { class: 'muted small' }, `Governed SQL is limited to: ${(gov.datasets || []).join(', ') || 'none'}. Showing ${shown.length} of ${events.length} events, newest first.`),
+                shown.length ? this.table(shown, !onlyChat) : el('p', { class: 'muted' }, 'No matching events yet.'),
+            );
+        } catch (e) {
+            content.innerHTML = '';
+            content.append(el('div', { class: 'error-box' }, `Could not load the audit trail: ${e.message}`));
+        }
+    }
+
+    table(events, showChat) {
+        const rows = events.map(e => {
+            const detail = e.args?.command || e.args?.sql || e.args?.code || '';
+            return el('tr', { class: e.decision },
+                el('td', {}, formatDate(e.ts * 1000)),
+                showChat ? el('td', {}, el('a', { href: '#', onclick: ev => { ev.preventDefault(); this.show({ sessionId: e.session_id }); } }, e.session_id)) : null,
+                el('td', {}, LAYERS[e.layer] || e.layer),
+                el('td', {}, el('span', { class: `decision ${e.decision}` }, DECISIONS[e.decision] || e.decision)),
+                el('td', {}, e.action),
+                el('td', { class: 'mono' }, e.detail + (detail ? `\n${detail.slice(0, 400)}` : '')));
+        });
+        return el('table', { class: 'audit-table' },
+            el('thead', {}, el('tr', {}, ['Time', showChat ? 'Chat' : null, 'Layer', 'Decision', 'Action', 'Detail'].filter(Boolean).map(h => el('th', {}, h)))),
+            el('tbody', {}, rows));
+    }
+
+    async selftest() {
+        this.app.showView('audit');
+        document.getElementById('audit-title').textContent = 'Sandbox self-test';
+        const content = document.getElementById('audit-content');
+        content.innerHTML = '<div class="muted small"><span class="spinner"></span> creating a fresh sandbox and running checks (about a minute)…</div>';
+        try {
+            const r = await api('api/governance/selftest', { method: 'POST' });
+            content.innerHTML = '';
+            content.append(
+                el('p', { class: 'muted small' }, `Ran in a throwaway sandbox (${r.session_id}), deleted afterwards. Its events are in the audit trail.`),
+                el('table', { class: 'audit-table' },
+                    el('thead', {}, el('tr', {}, ['Check', 'Expected', 'Output', 'Policy decisions'].map(h => el('th', {}, h)))),
+                    el('tbody', {}, r.results.map(c => el('tr', { class: 'selftest-row' },
+                        el('td', {}, c.check), el('td', {}, c.expect),
+                        el('td', { class: 'mono' }, c.output.slice(-600)),
+                        el('td', { class: 'mono' }, (c.blocked?.events || []).map(e => e.summary).join('\n') || '–'))))),
+            );
+        } catch (e) {
+            content.innerHTML = '';
+            content.append(el('div', { class: 'error-box' }, `Self-test failed: ${e.message}`));
+        }
     }
 }

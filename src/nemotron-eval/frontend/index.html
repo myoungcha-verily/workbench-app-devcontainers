@@ -62,6 +62,7 @@
             <button class="tab-btn" data-tab="prompts">Prompts</button>
             <button class="tab-btn" data-tab="compare">Compare</button>
             <button class="tab-btn" data-tab="eval">Eval</button>
+            <button class="tab-btn" data-tab="audit">Audit</button>
         </div>
         <div class="tab-panel active" id="tab-chats">
             <button class="btn primary block" id="new-chat-btn" title="New chat (Ctrl+K)">＋ New chat</button>
@@ -87,6 +88,18 @@
             <div id="eval-tasks" class="checkbox-list scroll"></div>
             <button class="btn primary block" id="eval-run">Run evaluation</button>
             <div id="eval-runs"></div>
+        </div>
+        <div class="tab-panel" id="tab-audit">
+            <p class="muted small">Every action in governed chats: code run in the OpenShell sandbox, SQL through the broker, Workbench tool calls, and what policy blocked.</p>
+            <label class="field row"><input type="checkbox" id="audit-this-chat"> <span>Only the open chat</span></label>
+            <div class="checkbox-list" id="audit-decisions">
+                <label class="checkbox-item"><input type="checkbox" value="deny" checked> <span>Blocked by policy</span></label>
+                <label class="checkbox-item"><input type="checkbox" value="fail" checked> <span>Not available in sandbox</span></label>
+                <label class="checkbox-item"><input type="checkbox" value="allow" checked> <span>Allowed</span></label>
+                <label class="checkbox-item"><input type="checkbox" value="info"> <span>Sandbox lifecycle</span></label>
+            </div>
+            <button class="btn primary block" id="audit-open">Show audit trail</button>
+            <button class="btn block" id="audit-selftest">Run sandbox self-test</button>
         </div>
     </aside>
 
@@ -117,6 +130,15 @@
             </div>
             <div class="compare-prompt" id="compare-prompt-view"></div>
             <div class="compare-columns" id="compare-columns"></div>
+        </section>
+        <section class="eval-view" id="audit-view" hidden>
+            <div class="chat-header">
+                <span id="audit-title">Audit trail</span><span class="spacer"></span>
+                <button class="btn tiny ghost" id="audit-refresh">↻ Refresh</button>
+                <button class="btn tiny ghost" id="audit-download">⬇ Download</button>
+                <button class="btn tiny" id="audit-close">Back to chat</button>
+            </div>
+            <div id="audit-content" class="eval-content"></div>
         </section>
         <section class="eval-view" id="eval-view" hidden>
             <div class="chat-header">

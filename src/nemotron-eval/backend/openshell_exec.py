@@ -36,6 +36,9 @@ BROKER_URL = "http://host.openshell.internal:8080/broker"
 _DECISION = re.compile(r"\b(NET|HTTP):(\w+) \[\w+\] (ALLOWED|DENIED) (.*)")
 _REASON = re.compile(r"\[reason:([^\]]*)\]")
 _TIMESTAMP = re.compile(r"^\[(\d+(?:\.\d+)?)\]")
+# A command that fails because the sandbox lacks a program or module is stopped
+# too, but by absence rather than policy, so the supervisor logs nothing.
+_MISSING = re.compile(r"(?:^|\n)(?:bash: (?:line \d+: )?)?(\S+): command not found|No module named '([^']+)'")
 
 
 def sandbox_name(session_id: str) -> str:
@@ -49,6 +52,7 @@ class OpenShellExecutor:
     def __init__(self):
         self.token = secrets.token_urlsafe(32)
         self.ready: Dict[str, bool] = {}
+        self.sessions: Dict[str, str] = {}  # sandbox name -> chat session id, for broker attribution
         self.lock = asyncio.Lock()
         self.status = {"gateway": "not checked", "provider": "not created", "error": ""}
 
@@ -111,6 +115,7 @@ class OpenShellExecutor:
     async def ensure(self, session_id: str) -> Optional[str]:
         """Creates the chat's sandbox on first use. Returns an error message or None."""
         name = sandbox_name(session_id)
+        self.sessions[name] = session_id
         if self.ready.get(name):
             return None
         async with self.lock:
@@ -126,7 +131,7 @@ class OpenShellExecutor:
                 r = await self.cli(
                     "sandbox", "create", "--name", name, "--from", IMAGE, "--policy", str(POLICY),
                     "--provider", PROVIDER, "--no-auto-providers", "--no-tty", "--detach",
-                    "--env", f"WORKBENCH_BROKER_URL={BROKER_URL}",
+                    "--env", f"WORKBENCH_BROKER_URL={BROKER_URL}", "--env", f"WORKBENCH_SANDBOX={name}",
                     "--label", f"chat={name}", timeout=300,
                 )
                 if r["exit_code"] != 0:
@@ -148,8 +153,16 @@ class OpenShellExecutor:
             self.ready.pop(name, None)
         timed_out = r["timed_out"] or r["exit_code"] == 124
         text = format_result(r["stdout"], r["stderr"], r["exit_code"], timed_out)
+        command = argv[-1] if argv[:2] == ["bash", "-lc"] else stdin
+        audit.record(session_id, "openshell", "allow", "exec", f"{' '.join(argv[:2])} exited {r['exit_code']}",
+                     {"command": command})
         denials = await self.denials(session_id, since)
         result = {"text": text, "exit_code": r["exit_code"]}
+        missing = sorted({a or b for a, b in _MISSING.findall(r["stdout"] + "\n" + r["stderr"])})
+        if missing:
+            audit.record(session_id, "openshell", "fail", "missing_tool",
+                         f"not available in the sandbox: {', '.join(missing)}", {"command": command})
+            result["missing"] = missing
         if denials:
             lines = "\n".join(f"- {d['summary']}" for d in denials)
             result["text"] += f"\n\n[OpenShell policy blocked {len(denials)} connection(s):\n{lines}]"
@@ -190,6 +203,9 @@ class OpenShellExecutor:
                 events.append(event)
                 audit.record(session_id, "openshell", "deny", event["kind"], event["summary"], {"raw": event["raw"]})
         return events
+
+    def session_for(self, name: str) -> str:
+        return self.sessions.get(name, name or "sandbox")
 
     async def delete(self, session_id: str) -> None:
         name = sandbox_name(session_id)
