@@ -55,9 +55,10 @@ services:
       - work:/home/nemotron
       - data:/data
     ports:
-      # Loopback only: governed sandboxes reach the broker via host.openshell.internal.
-      # The Workbench proxy uses app-network, so nothing in the VPC can reach this port.
-      - "127.0.0.1:8080:8080"
+      # Workbench's start-proxy-agent.sh proxies the port published on 0.0.0.0, so it
+      # must stay published on all interfaces (a 127.0.0.1 binding leaves the app
+      # unreachable). port-guard below drops connections to it from other VMs.
+      - "8080:8080"
     networks:
       - app-network
     # SYS_ADMIN and fuse are required to mount workspace buckets into the container.
@@ -117,6 +118,31 @@ services:
       HOME: /var/lib/openshell
     networks:
       - app-network
+
+  # Drops connections to the app port that arrive on the VM's network card, so other
+  # VMs in the network cannot reach it without Workbench sign-in. The Workbench proxy
+  # agent dials out, and sandboxes and the proxy reach the app locally, so neither is
+  # affected. The rule sits in the raw table, before Docker's NAT, and stays in place
+  # after this container exits.
+  port-guard:
+    image: alpine:3.20
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: on-failure
+    command:
+      - sh
+      - -euc
+      - |
+        apk add --no-cache iptables >/dev/null
+        nic=$$(ip route show default | awk '{print $$5; exit}')
+        [ -n "$$nic" ] || { echo "port-guard: no default interface" >&2; exit 1; }
+        rule="-i $$nic -p tcp --dport 8080 -j DROP"
+        iptables -t raw -C PREROUTING $$rule 2>/dev/null || iptables -t raw -I PREROUTING $$rule
+        # IPv6 is usually off on Workbench VMs; best effort.
+        ip6tables -t raw -C PREROUTING $$rule 2>/dev/null || ip6tables -t raw -I PREROUTING $$rule 2>/dev/null || true
+        echo "port-guard: dropping tcp/8080 arriving on $$nic"
 
   # Builds the sandbox workload image, then exits.
   sandbox-image:

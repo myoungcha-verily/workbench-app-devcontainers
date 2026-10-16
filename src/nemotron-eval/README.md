@@ -101,7 +101,7 @@ allowed bucket but not another one and cannot write. All should pass before a de
 (`POST /api/governance/selftest` returns the raw results).
 
 How it is wired: `docker-compose.yaml` runs the OpenShell 0.1.4 gateway next to the app (Docker driver,
-loopback only, telemetry off) and builds the sandbox image `nemotron-agent-sandbox:0.2` (Python 3.11 with
+gateway port on loopback only, telemetry off) and builds the sandbox image `nemotron-agent-sandbox:0.2` (Python 3.11 with
 pandas and friends pre-installed; there is no `pip` access at runtime). The policy is
 `openshell/policy.yaml`; the storage rule is added at start-up from `GOVERNED_BUCKETS` and written to
 `/data/openshell/`.
@@ -114,7 +114,7 @@ the agent can still *relay* a planted instruction to you in its answer; and Open
 
 `redteam/` holds the prompt-injection tests used in the pilot: `injections.json` (six planted instructions,
 all aimed at `.invalid` hosts that cannot resolve), `plant.sh <project> [--clear]` to apply or remove them
-on a dataset you own, `run_redteam.py <host:port>` to run every scenario governed and ungoverned (the app port is loopback-only, so run it on the app VM, e.g. inside the container against `127.0.0.1:8080`), and
+on a dataset you own, `run_redteam.py <host:port>` to run every scenario governed and ungoverned (the app port is closed to other VMs, so run it on the app VM, e.g. inside the container against `127.0.0.1:8080`), and
 `summarize.py results.json` for the table. Run it only on a copy of data you are allowed to modify. Result
 files can contain the data the agent read, so keep them inside the workspace.
 
@@ -155,9 +155,10 @@ You need a GPU and a bucket with the Nemotron GGUF files.
 6. **Check governance.** Audit → **Run sandbox self-test**; all checks should pass (13, or 9 without `GOVERNED_BUCKETS`). Then pick
    **Policy → Governed** for a governed chat.
 
-Workspace members can each create their own app from the same config (each app is its own VM and GPU). The app port is bound to the VM's loopback and is reached only through the Workbench proxy:
-do not publish it on the VM's network interface (other VMs in the network could then reach it without
-Workbench sign-in).
+Workspace members can each create their own app from the same config (each app is its own VM and GPU). Workbench's proxy agent only finds ports published on all interfaces, so `8080` is published as
+`"8080:8080"` (binding it to `127.0.0.1` leaves the app unreachable). The `port-guard` service then drops
+connections to 8080 that arrive on the VM's network card, so other VMs in the network cannot reach the
+app without Workbench sign-in. Keep it if you change ports.
 
 Other environment settings: `ENABLED_MODELS` (comma-separated model IDs; default all that fit),
 `OLLAMA_CONTEXT_LENGTH`, and `GOVERNED_MAX_ROWS` (default 500) and `GOVERNED_MAX_BYTES` (default 2 GB) for the broker.
@@ -202,4 +203,5 @@ redteam/                  prompt-injection test kit (see Red-team kit)
 | Governed chats say OpenShell is unavailable | `docker logs openshell-gateway`; the 🛡 panel shows the last error. Gateway state lives in `/var/lib/openshell` on the VM |
 | Self-test: storage checks missing | `GOVERNED_BUCKETS` is blank, or the token mint failed (🛡 panel shows the error) |
 | Self-test: allowed query fails | The first `GOVERNED_DATASETS` entry does not exist or you cannot read it |
+| App never opens; logs say `Proxy target port is empty` | The app port is not published on `0.0.0.0` (for example bound to `127.0.0.1`); publish it as `"8080:8080"` and rely on `port-guard` |
 | App logs from outside the VM | `wb app logs --id=<app-name> --start-time=… --end-time=…` (newest first) |
