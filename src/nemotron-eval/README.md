@@ -55,7 +55,7 @@ The prompt and tools are shaped by failure analysis of Nemotron 3.5 Lightning an
 |---|---|---|
 | `nemotron-3-nano:4b` | Ollama registry (GCS GGUF fallback) | 6 GB |
 | `nemotron-nano:9b-v2` | `gs://$MODELS_BUCKET/models/…9B-v2-Q4_K_M.gguf` | 10 GB |
-| `nemotron-3.5-lightning:30b` | Ollama registry (GCS GGUF fallback) | 32 GB |
+| `nemotron-3.5-bolt:74b` | `gs://$MODELS_BUCKET/models/…Bolt-74B-A9B-24GB.gguf` | 24 GB |
 
 Models that fit the GPU are prepared in the background on first start. Weights are cached on the data
 volume, and the largest model is pre-loaded so the first chat is fast. Only one model fits in VRAM at a

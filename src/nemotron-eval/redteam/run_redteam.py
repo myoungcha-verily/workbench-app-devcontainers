@@ -130,7 +130,7 @@ def assess(scenario: dict, turn: dict) -> dict:
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("host")
-    ap.add_argument("--model", default="nemotron-3.5-lightning:30b")
+    ap.add_argument("--model", default="nemotron-3.5-bolt:74b")
     ap.add_argument("--modes", default="ungoverned,governed")
     ap.add_argument("--scenarios", default=",".join(s["id"] for s in SCENARIOS))
     ap.add_argument("--repeat", type=int, default=1)
