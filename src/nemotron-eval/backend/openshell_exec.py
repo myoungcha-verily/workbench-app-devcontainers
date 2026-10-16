@@ -10,6 +10,7 @@ Uses the `openshell` CLI: the Python SDK needs protobuf 6, which the app's
 Google Cloud libraries don't support yet.
 """
 import asyncio
+import hashlib
 import os
 import re
 import secrets
@@ -37,7 +38,8 @@ _REASON = re.compile(r"\[reason:([^\]]*)\]")
 
 
 def sandbox_name(session_id: str) -> str:
-    return "chat-" + re.sub(r"[^a-z0-9-]", "-", session_id.lower())[:40]
+    # OpenShell names are at most 19 characters.
+    return "chat-" + hashlib.sha1(session_id.encode()).hexdigest()[:12]
 
 
 class OpenShellExecutor:
