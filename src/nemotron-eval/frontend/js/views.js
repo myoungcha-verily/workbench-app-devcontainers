@@ -146,7 +146,7 @@ export class EvalView {
 }
 
 const LAYERS = { openshell: 'OpenShell sandbox', broker: 'SQL broker', app: 'App policy' };
-const DECISIONS = { deny: 'blocked', fail: 'not available', allow: 'allowed', info: 'info' };
+const DECISIONS = { deny: 'blocked', fail: 'not available', allow: 'allowed', info: 'info', approve: 'approved by user', reject: 'rejected by user' };
 
 export class AuditView {
     constructor(app) {
@@ -186,6 +186,7 @@ export class AuditView {
                     el('div', { class: 'audit-stat' }, el('b', {}, String(count('deny'))), 'blocked by policy'),
                     el('div', { class: 'audit-stat' }, el('b', {}, String(count('fail'))), 'not available in sandbox'),
                     el('div', { class: 'audit-stat' }, el('b', {}, String(count('allow'))), 'allowed actions'),
+                    el('div', { class: 'audit-stat' }, el('b', {}, `${count('approve')} / ${count('reject')}`), 'rules approved / rejected'),
                     el('div', { class: 'audit-stat' }, el('b', {}, String(chats)), onlyChat ? 'chat' : 'chats'),
                     el('div', { class: 'audit-stat' }, el('b', {}, os.gateway === 'connected' && os.provider === 'ready' ? '✓' : '✗'),
                         `OpenShell ${os.gateway || 'unknown'}${os.error ? ` (${os.error})` : ''}`),

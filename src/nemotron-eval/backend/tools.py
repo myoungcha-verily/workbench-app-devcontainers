@@ -89,7 +89,8 @@ LOCAL_TOOLS: List[Dict[str, Any]] = [
         "description": (
             "Run Python 3 code in this chat's working directory and return what it prints. Files persist "
             "between calls. pandas, numpy, scipy, statsmodels and matplotlib are installed. To get BigQuery "
-            "data as a DataFrame: `from workbench_data import query; df = query(\"SELECT ...\")`."
+            "data as a DataFrame: `from workbench_data import query; df = query(\"SELECT ...\")`. To read Cloud "
+            "Storage: `from workbench_data import list_objects, read_object` (read_object returns bytes)."
         ),
         "parameters": {
             "type": "object",

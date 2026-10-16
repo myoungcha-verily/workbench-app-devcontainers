@@ -76,6 +76,7 @@ export class Chat {
         // Load artifacts first so chips in the history show their titles.
         await this.app.canvas.loadSession(session.id);
         this.render(session);
+        if (session.settings?.governed) this.watchProposals({ once: true });
         document.getElementById('chat-title').textContent = session.title;
         this.app.applySettings(session.settings);
         this.app.onSessionChanged(session.id);
@@ -222,6 +223,7 @@ export class Chat {
                 el('button', { class: 'btn tiny ghost', onclick: () => this.app.audit.show({ sessionId: this.sessionId }) }, 'View in audit trail'),
             );
             entry.card.after(entry.block);
+            if (ev.blocked.layer === 'openshell') this.watchProposals();
         } else if (ev.missing) {
             entry.block = el('div', { class: 'policy-block missing' },
                 el('div', { class: 'policy-block-title' }, `🛡 Not available in the OpenShell sandbox: ${ev.missing.join(', ')}`),
@@ -240,6 +242,52 @@ export class Chat {
         }
         entry.detail.append(wrap);
         if (!ev.ok) entry.card.open = true;
+    }
+
+    // OpenShell drafts a rule for each blocked connection about 10 s later.
+    // Show the drafts so the user can widen this chat's policy, or refuse.
+    watchProposals({ once = false } = {}) {
+        const sid = this.sessionId;
+        if (!sid) return;
+        clearTimeout(this.proposalTimer);
+        const deadline = Date.now() + 45000;
+        const poll = async () => {
+            if (this.sessionId !== sid) return;
+            try {
+                (await api(`api/governance/proposals?session_id=${encodeURIComponent(sid)}`)).forEach(p => this.showProposal(p));
+            } catch { /* the sandbox may be gone */ }
+            if (!once && Date.now() < deadline) this.proposalTimer = setTimeout(poll, 4000);
+        };
+        this.proposalTimer = setTimeout(poll, once ? 0 : 3000);
+    }
+
+    showProposal(p) {
+        if (this.messages.querySelector(`.proposal-card[data-chunk="${CSS.escape(p.chunk)}"]`)) return;
+        const sid = this.sessionId;
+        const decide = async approve => {
+            actions.replaceChildren(el('span', { class: 'muted small' }, approve ? 'Approving…' : 'Rejecting…'));
+            try {
+                const r = await api('api/governance/proposals/decide', { method: 'POST', body: { session_id: sid, chunk_id: p.chunk, approve } });
+                actions.replaceChildren(el('span', { class: r.ok ? 'small' : 'error-box' },
+                    r.ok ? (approve ? '✓ Approved for this chat. The blocked request is not retried automatically: ask the agent to try again.'
+                                    : '✗ Rejected. The connection stays blocked.')
+                         : `Failed: ${r.message}`));
+            } catch (e) { actions.replaceChildren(el('span', { class: 'error-box' }, e.message)); }
+        };
+        const actions = el('div', { class: 'confirm-actions' },
+            el('button', { class: 'btn danger', onclick: () => decide(true) }, 'Approve for this chat'),
+            el('button', { class: 'btn', onclick: () => decide(false) }, 'Reject'));
+        this.messages.append(el('div', { class: 'proposal-card', dataset: { chunk: p.chunk } },
+            el('div', { class: 'policy-block-title' }, '🛡 OpenShell proposes a policy change'),
+            el('div', {}, p.rationale || p.rule || ''),
+            el('div', { class: 'mono small' }, [p.endpoints, p.binaries].filter(Boolean).join(' · ')),
+            p.security ? el('div', { class: 'small warn-text' }, `Security notes: ${p.security}`) : null,
+            p.prover ? el('div', { class: 'muted small' }, `Prover: ${p.prover}`) : null,
+            p.hits ? el('div', { class: 'muted small' }, `Blocked attempts: ${p.hits}`) : null,
+            el('div', { class: 'muted small' }, 'Approving adds this rule to this chat\'s sandbox only, and is recorded in the audit trail. Check the destination: planted instructions in data can make the agent ask for exactly this.'),
+            actions));
+        this.scrollToBottom();
+        this.app.notify('OpenShell proposes a policy change');
     }
 
     showConfirm(ev) {

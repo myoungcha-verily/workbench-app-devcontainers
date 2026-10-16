@@ -282,6 +282,9 @@ body.sidebar-collapsed .sidebar { display: none; }
 .policy-block-title { font-weight: 600; color: #3cb371; }
 .policy-block ul { margin: 4px 0 0 18px; padding: 0; }
 .policy-block .btn { margin-top: 4px; }
+.proposal-card { border: 1px solid var(--border); border-left: 4px solid #3cb371; border-radius: 6px; margin: 8px 0; padding: 8px 12px; background: var(--bg-2); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.proposal-card .mono { font-family: var(--mono); word-break: break-word; }
+.warn-text { color: var(--warn); }
 .policy-block.missing { border-color: #8a7f2e; background: rgba(138, 127, 46, 0.12); }
 .policy-block.missing .policy-block-title { color: #c9b84a; }
 .audit-summary { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
@@ -297,6 +300,8 @@ body.sidebar-collapsed .sidebar { display: none; }
 .decision.fail { background: rgba(138, 127, 46, 0.2); color: #c9b84a; }
 .decision.allow { background: var(--bg-3, rgba(127, 127, 127, 0.15)); color: var(--fg-2); }
 .decision.info { color: var(--fg-2); }
+.decision.approve { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.decision.reject { background: rgba(46, 139, 87, 0.2); color: #3cb371; }
 .selftest-row.pass td:first-child { border-left: 3px solid #3cb371; }
 .governed-control select { font-weight: 600; }
 body.ungoverned .governed-control select { color: var(--warn); border-color: var(--warn); }

@@ -19,6 +19,7 @@ import audit
 import context
 import ollama_client
 import sqlrun
+import token_minter
 import tools
 from agent import EFFORT, NUM_CTX, Turn, think_param
 from catalog import Catalog
@@ -71,6 +72,7 @@ async def lifespan(app: FastAPI):
     spawn(mcp.refresh(force=True))
     spawn(catalog.refresh_loop(mcp))
     spawn(sandbox.setup())
+    spawn(sandbox.storage_refresh_loop())
     spawn(audit.export_loop(os.environ.get("APP_NAME", "nemotron-eval")))
     yield
 
@@ -536,6 +538,24 @@ async def broker_sql(body: BrokerRequest, request: Request):
     return result
 
 
+class ProposalDecision(Base):
+    session_id: str
+    chunk_id: str
+    approve: bool
+    reason: str = ""
+
+
+@app.get("/api/governance/proposals")
+async def governance_proposals(session_id: str):
+    """Rules OpenShell drafted from this chat's blocked connections, awaiting the user."""
+    return await sandbox.proposals(session_id)
+
+
+@app.post("/api/governance/proposals/decide")
+async def governance_decide(body: ProposalDecision):
+    return await sandbox.decide(body.session_id, body.chunk_id, body.approve, body.reason)
+
+
 @app.get("/api/audit")
 async def audit_events(limit: int = 500, session_id: Optional[str] = None):
     return audit.recent(limit, session_id)
@@ -566,6 +586,21 @@ SELFTEST = [
     ("broker: other paths blocked", "shell", "curl -s -m 8 -X POST http://host.openshell.internal:8080/api/sql/run -H 'Content-Type: application/json' -d '{\"sql\": \"SELECT 1\"}'; echo \" exit=$?\"", "blocked"),
     ("filesystem: cannot write outside workdir", "shell", "touch /usr/local/x 2>&1; touch /sandbox/ok && echo sandbox-writable", "permission denied"),
 ]
+if token_minter.BUCKETS:
+    _bucket = token_minter.BUCKETS[0]
+    SELFTEST += [
+        ("storage: allowed bucket readable", "python",
+         f"from workbench_data import list_objects\nprint(list_objects({_bucket!r})[:5])", "lists objects"),
+        ("storage: token is a placeholder", "shell", "echo \"$WORKBENCH_GCS_TOKEN\" | cut -c1-24", "starts with openshell:"),
+        ("storage: other bucket refused", "python",
+         "from workbench_data import list_objects\ntry:\n    print(list_objects('eval-benchmark-wb-meteoric-gourd-5139'))\n"
+         "except Exception as e:\n    print('refused:', e)", "refused"),
+        ("storage: writes refused", "python",
+         "import os, urllib.request\nreq = urllib.request.Request("
+         f"'https://storage.googleapis.com/upload/storage/v1/b/{_bucket}/o?uploadType=media&name=selftest.txt', data=b'x', "
+         "headers={'Authorization': 'Bearer ' + os.environ.get('WORKBENCH_GCS_TOKEN', '')})\ntry:\n"
+         "    print(urllib.request.urlopen(req, timeout=20).status)\nexcept Exception as e:\n    print('refused:', e)", "refused"),
+    ]
 
 
 @app.post("/api/governance/selftest")

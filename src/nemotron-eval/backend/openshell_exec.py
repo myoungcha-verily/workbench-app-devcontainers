@@ -2,9 +2,14 @@
 
 The sandbox has no network of its own. Its supervisor allows only what
 openshell/policy.yaml lists (the app's SQL broker) and logs every decision.
-Real credentials never enter it: the broker token is a provider credential,
-so the sandbox sees a placeholder that the supervisor replaces on requests to
-the broker endpoint only.
+Real credentials never enter it: the broker token and the downscoped storage
+token (token_minter.py) are provider credentials, so the sandbox sees
+placeholders that the supervisor replaces on requests to the allowed endpoints
+only.
+
+When the policy blocks a connection, OpenShell drafts a rule that would allow
+it. proposals() lists the drafts for a chat; decide() approves one into the
+live sandbox policy or rejects it. The user makes that call in the chat.
 
 Uses the `openshell` CLI: the Python SDK needs protobuf 6, which the app's
 Google Cloud libraries don't support yet.
@@ -19,15 +24,23 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import audit
+import token_minter
 from executors import COMMAND_TIMEOUT_S, format_result
 
 CLI = os.environ.get("OPENSHELL_CLI", "/usr/local/bin/openshell")
 GATEWAY = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT", "")
 CONFIG_DIR = Path(os.environ.get("APP_ROOT", "/app")) / "openshell"
-POLICY = CONFIG_DIR / "policy.yaml"
+BASE_POLICY = CONFIG_DIR / "policy.yaml"
 PROFILE = CONFIG_DIR / "broker-profile.yaml"
-IMAGE = os.environ.get("SANDBOX_IMAGE", "nemotron-agent-sandbox:0.1")
+# Policy and storage profile rendered with the GOVERNED_BUCKETS allowlist.
+RUNTIME_DIR = Path(os.environ.get("DATA_DIR", "/data")) / "openshell"
+POLICY = RUNTIME_DIR / "policy.yaml"
+GCS_PROFILE = RUNTIME_DIR / "storage-profile.yaml"
+IMAGE = os.environ.get("SANDBOX_IMAGE", "nemotron-agent-sandbox:0.2")
 PROVIDER = "workbench-broker"
+GCS_PROVIDER = "workbench-storage"
+# Refresh the storage token this long before it expires.
+GCS_REFRESH_MARGIN_S = 600
 BROKER_URL = "http://host.openshell.internal:8080/broker"
 
 # Shorthand OCSF lines, e.g.
@@ -36,6 +49,7 @@ BROKER_URL = "http://host.openshell.internal:8080/broker"
 _DECISION = re.compile(r"\b(NET|HTTP):(\w+) \[\w+\] (ALLOWED|DENIED) (.*)")
 _REASON = re.compile(r"\[reason:([^\]]*)\]")
 _TIMESTAMP = re.compile(r"^\[(\d+(?:\.\d+)?)\]")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # A command that fails because the sandbox lacks a program or module is stopped
 # too, but by absence rather than policy, so the supervisor logs nothing.
 _MISSING = re.compile(r"(?:^|\n)(?:bash: (?:line \d+: )?)?(\S+): command not found|No module named '([^']+)'")
@@ -54,7 +68,9 @@ class OpenShellExecutor:
         self.ready: Dict[str, bool] = {}
         self.sessions: Dict[str, str] = {}  # sandbox name -> chat session id, for broker attribution
         self.lock = asyncio.Lock()
-        self.status = {"gateway": "not checked", "provider": "not created", "error": ""}
+        self.status = {"gateway": "not checked", "provider": "not created", "error": "",
+                       "storage": "disabled" if not token_minter.BUCKETS else "not created",
+                       "buckets": token_minter.BUCKETS, "storage_token_expires": None}
 
     @property
     def available(self) -> bool:
@@ -102,15 +118,73 @@ class OpenShellExecutor:
         if r["exit_code"] != 0 and "exist" not in (r["stderr"] + r["stdout"]).lower():
             self.status.update(provider="profile import failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
             return
-        credential = f"WORKBENCH_BROKER_TOKEN={self.token}"
-        r = await self.cli("provider", "create", "--name", PROVIDER, "--type", "workbench-broker", "--credential", credential)
-        if r["exit_code"] != 0 and "exist" in (r["stderr"] + r["stdout"]).lower():
-            # Gateway state outlives app restarts: rotate the token instead.
-            r = await self.cli("provider", "update", PROVIDER, "--credential", credential, "--wait")
+        self.render_policy()
+        r = await self.put_provider(PROVIDER, "workbench-broker", f"WORKBENCH_BROKER_TOKEN={self.token}")
         if r["exit_code"] != 0:
             self.status.update(provider="create failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
             return
+        if token_minter.BUCKETS:
+            r = await self.cli("profile", "import", "-f", str(GCS_PROFILE))
+            if r["exit_code"] != 0 and "exist" in (r["stderr"] + r["stdout"]).lower():
+                # The bucket allowlist may have changed since the profile was imported.
+                r = await self.cli("profile", "update", "-f", str(GCS_PROFILE), "workbench-storage")
+            if r["exit_code"] != 0:
+                self.status.update(provider="storage profile import failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
+                return
+            if not await self.refresh_storage_token():
+                return
         self.status.update(provider="ready", error="")
+
+    async def put_provider(self, name: str, kind: str, credential: str) -> Dict:
+        r = await self.cli("provider", "create", "--name", name, "--type", kind, "--credential", credential)
+        if r["exit_code"] != 0 and "exist" in (r["stderr"] + r["stdout"]).lower():
+            # Gateway state outlives app restarts: rotate the credential instead.
+            r = await self.cli("provider", "update", name, "--credential", credential, "--wait")
+        return r
+
+    def render_policy(self) -> None:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        policy = BASE_POLICY.read_text()
+        if token_minter.BUCKETS:
+            endpoint = (
+                "      - host: storage.googleapis.com\n        port: 443\n        protocol: rest\n"
+                "        enforcement: enforce\n        # GCS object names are %2F-encoded in API paths.\n"
+                "        allow_encoded_slash: true\n        rules:\n" + token_minter.endpoint_rules() + "\n"
+            )
+            policy += ("\n  # Read-only object access on the allowlisted buckets, with a downscoped token.\n"
+                       "  workbench_storage:\n    name: workbench_storage\n    endpoints:\n" + endpoint
+                       + "    binaries:\n      - path: /usr/local/bin/python3.11\n")
+            GCS_PROFILE.write_text(
+                "# Generated by openshell_exec.py: downscoped storage token for governed sandboxes.\n"
+                "id: workbench-storage\ndisplay_name: Workbench storage (read-only, downscoped)\n"
+                "description: Short-lived token limited to object reads on the allowlisted buckets\ncategory: other\n"
+                "credentials:\n  - name: token\n    env_vars: [WORKBENCH_GCS_TOKEN]\n    required: true\n"
+                "    auth_style: bearer\n    header_name: authorization\n"
+                "endpoints:\n" + endpoint.replace("\n      ", "\n  ").replace("      - host", "  - host", 1)
+                + "binaries:\n  - /usr/local/bin/python3.11\n")
+        POLICY.write_text(policy)
+
+    async def refresh_storage_token(self) -> bool:
+        try:
+            token, expires = await asyncio.to_thread(token_minter.mint)
+        except Exception as e:
+            self.status.update(storage="mint failed", error=f"storage token: {type(e).__name__}: {e}"[:500])
+            return False
+        r = await self.put_provider(GCS_PROVIDER, "workbench-storage", f"WORKBENCH_GCS_TOKEN={token}")
+        if r["exit_code"] != 0:
+            self.status.update(storage="provider failed", error=(r["stderr"] or r["stdout"]).strip()[-500:])
+            return False
+        self.status.update(storage="ready", storage_token_expires=expires)
+        audit.record("-", "openshell", "info", "storage_token",
+                     f"minted a read-only token for {', '.join(token_minter.BUCKETS)}, expires in {int(expires - time.time())}s", {})
+        return True
+
+    async def storage_refresh_loop(self) -> None:
+        while token_minter.BUCKETS:
+            expires = self.status.get("storage_token_expires") or 0
+            await asyncio.sleep(max(30, expires - time.time() - GCS_REFRESH_MARGIN_S))
+            if self.status["provider"] == "ready":
+                await self.refresh_storage_token()
 
     async def ensure(self, session_id: str) -> Optional[str]:
         """Creates the chat's sandbox on first use. Returns an error message or None."""
@@ -130,7 +204,8 @@ class OpenShellExecutor:
                 started = time.time()
                 r = await self.cli(
                     "sandbox", "create", "--name", name, "--from", IMAGE, "--policy", str(POLICY),
-                    "--provider", PROVIDER, "--no-auto-providers", "--no-tty", "--detach",
+                    "--provider", PROVIDER, *(["--provider", GCS_PROVIDER] if token_minter.BUCKETS else []),
+                    "--no-auto-providers", "--no-tty", "--detach",
                     "--env", f"WORKBENCH_BROKER_URL={BROKER_URL}", "--env", f"WORKBENCH_SANDBOX={name}",
                     "--label", f"chat={name}", timeout=300,
                 )
@@ -204,6 +279,31 @@ class OpenShellExecutor:
                 audit.record(session_id, "openshell", "deny", event["kind"], event["summary"], {"raw": event["raw"]})
         return events
 
+    async def proposals(self, session_id: str) -> List[Dict]:
+        """Pending rules OpenShell drafted from this chat's blocked connections."""
+        name = sandbox_name(session_id)
+        if not self.ready.get(name):
+            return []
+        r = await self.cli("rule", "get", name, "--status", "pending", timeout=30)
+        return parse_rules(r["stdout"]) if r["exit_code"] == 0 else []
+
+    async def decide(self, session_id: str, chunk_id: str, approve: bool, reason: str = "") -> Dict:
+        name = sandbox_name(session_id)
+        pending = {p["chunk"]: p for p in await self.proposals(session_id)}
+        if chunk_id not in pending:
+            return {"ok": False, "message": "This proposal is no longer pending."}
+        args = ["rule", "approve" if approve else "reject", name, "--chunk-id", chunk_id]
+        if not approve and reason:
+            args += ["--reason", reason]
+        r = await self.cli(*args, timeout=60)
+        out = _ANSI.sub("", (r["stdout"] + r["stderr"]).strip())
+        ok = r["exit_code"] == 0
+        p = pending[chunk_id]
+        audit.record(session_id, "openshell", ("approve" if approve else "reject") if ok else "fail", "policy_rule",
+                     f"{'approved' if approve else 'rejected'} by the user: {p.get('endpoints', '')} for {p.get('binary', '')}"
+                     + ("" if ok else f" (failed: {out[-200:]})"), {"chunk": chunk_id, "rule": p.get("rule", "")})
+        return {"ok": ok, "message": out[-500:]}
+
     def session_for(self, name: str) -> str:
         return self.sessions.get(name, name or "sandbox")
 
@@ -211,3 +311,17 @@ class OpenShellExecutor:
         name = sandbox_name(session_id)
         self.ready.pop(name, None)
         await self.cli("sandbox", "delete", name, timeout=60)
+
+
+def parse_rules(text: str) -> List[Dict]:
+    """Parses `openshell rule get` output (plain text; the CLI has no JSON output)."""
+    chunks, current = [], None
+    for line in _ANSI.sub("", text).splitlines():
+        key, _, value = line.strip().partition(":")
+        if key == "Chunk":
+            current = {"chunk": value.strip()}
+            chunks.append(current)
+        elif current is not None and key in ("Status", "Rule", "Binary", "Confidence", "Rationale", "Security",
+                                             "Prover", "Application", "Endpoints", "Binaries", "Hits"):
+            current[key.lower()] = value.strip()
+    return [c for c in chunks if c.get("status", "pending") == "pending"]

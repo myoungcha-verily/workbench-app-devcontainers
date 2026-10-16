@@ -39,6 +39,8 @@ services:
       OPENSHELL_GATEWAY_ENDPOINT: "http://openshell-gateway:8080"
       OPENSHELL_TELEMETRY_ENABLED: "false"
       GOVERNED_DATASETS: "redteam_bhs"
+      # Buckets governed sandboxes may read, with a downscoped read-only token.
+      GOVERNED_BUCKETS: "cloned-synthetic-allofus-demo-wb-meteoric-gourd-5139"
       # The audit trail is copied here every 5 minutes (blank = keep it on the data disk only).
       AUDIT_EXPORT_URI: "gs://eval-benchmark-wb-meteoric-gourd-5139/openshell-pilot/audit"
       APP_NAME: "nemotron-openshell-pilot"
@@ -112,7 +114,7 @@ services:
 
   # Builds the sandbox workload image, then exits.
   sandbox-image:
-    image: nemotron-agent-sandbox:0.1
+    image: nemotron-agent-sandbox:0.2
     build:
       context: .
       dockerfile: sandbox-image/Dockerfile
