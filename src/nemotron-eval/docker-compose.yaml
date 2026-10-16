@@ -51,7 +51,9 @@ services:
       - work:/home/nemotron
       - data:/data
     ports:
-      - "8080:8080"
+      # Loopback only: governed sandboxes reach the broker via host.openshell.internal.
+      # The Workbench proxy uses app-network, so nothing in the VPC can reach this port.
+      - "127.0.0.1:8080:8080"
     networks:
       - app-network
     # SYS_ADMIN and fuse are required to mount workspace buckets into the container.
