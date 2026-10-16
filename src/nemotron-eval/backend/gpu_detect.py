@@ -56,6 +56,15 @@ MODEL_SPECS = [
         gcs_object="models/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf",
     ),
     ModelSpec(
+        model_id="nemotron-3.5-bolt:74b",
+        name="Nemotron 3.5 Bolt 74B-A9B (2-bit, 24GB)",
+        # 22 GB of native 2-bit weights plus KV cache; fits the A100 40GB with room for context.
+        min_vram_gb=24,
+        recommended_vram_gb=32,
+        ollama_tag="nemotron-3.5-bolt:74b-a9b-iq2",
+        gcs_object="models/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf",
+    ),
+    ModelSpec(
         model_id="nemotron-3.5-lightning:30b",
         name="Nemotron 3.5 Lightning 30B",
         # 25.5 GB of weights plus KV cache at a 16K context.
