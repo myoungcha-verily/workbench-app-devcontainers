@@ -1,0 +1,46 @@
+services:
+  app:
+    # Workbench proxies to the container named "application-server" on "app-network", and on GPU VMs injects the
+    # NVIDIA runtime block into this service. Do not add a `deploy:` section here.
+    container_name: "application-server"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: always
+    # Tensor parallelism across 8 GPUs exchanges activations through shared memory (NCCL); 64 MB default breaks it.
+    shm_size: "64gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      MODEL_REPO: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+      MODEL_DIR: "/data/models/super-vl-bf16"
+      HF_HOME: "/data/hf"
+      # Bearer token for the API (clients: eval-bench harness on the Jupyter VM). The API port is reachable from other
+      # VMs in the VPC without Workbench auth, so the token is required.
+      API_TOKEN_GCS: "gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/vllm_super_vl_token"
+      # A100 40GB is not an NVIDIA-listed target (Hopper/Blackwell are): BF16 weights take ~31 GB of each of 8 GPUs,
+      # so context and concurrency are tuned down from the model card and MTP speculation is off. Adjust and restart.
+      MAX_MODEL_LEN: "262144"
+      MAX_NUM_SEQS: "16"
+      GPU_MEMORY_UTILIZATION: "0.94"
+      EXTRA_ARGS: ""
+    volumes:
+      - .:/workspace:cached
+      # Weights (~250 GB) and caches live on the VM data disk and survive restarts.
+      - data:/data
+    ports:
+      # Must be published on 0.0.0.0, or the Workbench proxy finds no target port.
+      - "8080:8080"
+    networks:
+      - app-network
+
+volumes:
+  data:
+
+networks:
+  app-network:
+    external: true

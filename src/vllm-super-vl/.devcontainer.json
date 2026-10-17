@@ -1,0 +1,8 @@
+{
+    "name": "vLLM Nemotron 3.5 Super VL",
+    "dockerComposeFile": "docker-compose.yaml",
+    "service": "app",
+    "shutdownAction": "none",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "root"
+}

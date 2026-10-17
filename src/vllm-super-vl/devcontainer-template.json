@@ -1,0 +1,28 @@
+{
+    "id": "vllm-super-vl",
+    "version": "0.1.0",
+    "name": "vLLM Nemotron 3.5 Super VL",
+    "description": "Token-protected OpenAI-compatible vLLM server for Nemotron 3.5 Super VL (BF16, tensor parallel across all GPUs) for in-workspace agent runs and post-training data generation.",
+    "options": {
+        "cloud": {
+            "type": "string",
+            "description": "VM cloud environment",
+            "proposals": [
+                "gcp"
+            ],
+            "default": "gcp"
+        },
+        "login": {
+            "type": "string",
+            "description": "Whether to log in to workbench CLI",
+            "proposals": [
+                "true",
+                "false"
+            ],
+            "default": "false"
+        }
+    },
+    "platforms": [
+        "Any"
+    ]
+}
