@@ -1,0 +1,8 @@
+# Gate G0/G1: model loads with offload, 2 optimizer steps at <= 8k tokens, adapters saved. Watch "mem" in progress.log.
+name: g0-load-8k
+config: stageB_lora_a100.yaml
+data: gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/sft/latest/
+overrides: ["--step_scheduler.max_steps", "2", "--step_scheduler.ckpt_every_steps", "2", "--step_scheduler.val_every_steps", "1000",
+            "--dataset.max_tokens", "8192", "--dataloader.collate_fn.max_length", "8192",
+            "--validation_dataset.max_tokens", "8192", "--validation_dataloader.collate_fn.max_length", "8192"]
+upload_every_min: 5

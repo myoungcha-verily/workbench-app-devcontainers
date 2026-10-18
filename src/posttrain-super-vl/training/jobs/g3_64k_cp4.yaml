@@ -1,0 +1,9 @@
+# Gate G3: 64k context with context parallel 4 (dp 2, grad-accum 4 keeps 8 trajectories per step).
+name: g3-64k-cp4
+config: stageB_lora_a100.yaml
+data: gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/sft/latest/
+overrides: ["--step_scheduler.max_steps", "6", "--step_scheduler.ckpt_every_steps", "1000", "--step_scheduler.val_every_steps", "1000",
+            "--distributed.cp_size", "4",
+            "--dataset.max_tokens", "65536", "--dataloader.collate_fn.max_length", "65536",
+            "--validation_dataset.max_tokens", "65536", "--validation_dataloader.collate_fn.max_length", "65536"]
+upload_every_min: 5

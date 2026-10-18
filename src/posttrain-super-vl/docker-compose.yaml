@@ -1,0 +1,50 @@
+services:
+  app:
+    # Workbench proxies to the container named "application-server" on "app-network", and on GPU VMs injects the
+    # NVIDIA runtime block into this service. Do not add a `deploy:` section here.
+    container_name: "application-server"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: always
+    # NCCL (FSDP all-gathers, expert all-to-all, context parallel) between 8 GPUs uses shared memory; 64 MB default breaks it.
+    shm_size: "128gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      MODEL_REPO: "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+      # Pin the base revision so adapters always match the weights they were trained on (HF sha of 2026-10-16).
+      MODEL_REVISION: "1f8953f7f0935358e3605150d22bc15df062061c"
+      MODEL_DIR: "/data/models/super-vl-bf16"
+      HF_HOME: "/data/hf"
+      # AutoModel commit overlaid on the container's /opt/Automodel (main of 2026-10-17; has the Super VL recipes,
+      # agent_chat dataset, Mamba context parallel and FSDP2 CPU offload).
+      AUTOMODEL_COMMIT: "b9377eeeadbfd4f60a9ae579833924e42d5aeb8b"
+      # Workspace bucket prefix for training data, job specs, logs and outputs. Weights and trajectories never leave
+      # the workspace (no Hugging Face upload, no external services).
+      GCS_PREFIX: "gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain"
+      # 1 = download the base weights (~249 GB) at first start; 1 = poll GCS_PREFIX/jobs/ for job specs.
+      PREFETCH_WEIGHTS: "1"
+      JOB_POLL: "1"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    volumes:
+      - .:/workspace:cached
+      # Base weights, AutoModel checkout, data, checkpoints and merged weights live on the VM data disk (>= 1.2 TB).
+      - data:/data
+    ports:
+      # Must be published on 0.0.0.0, or the Workbench proxy finds no target port. Serves only a status page with GPU
+      # use and step/loss lines (no data); reachable from other VMs in the VPC without Workbench auth.
+      - "8080:8080"
+    networks:
+      - app-network
+
+volumes:
+  data:
+
+networks:
+  app-network:
+    external: true

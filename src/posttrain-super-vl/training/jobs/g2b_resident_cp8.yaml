@@ -1,0 +1,9 @@
+# Optional speed test: base weights kept on GPU (no host offload), context parallel 8 (dp 1, grad-accum 8).
+# Estimated ~33-37 GiB static + ~4.3 GiB activations at 32k: only fits if static memory is at the low end. If it fits it
+# is ~2x faster (no PCIe weight streaming). If the CLI cannot null offload_policy, copy the config and delete that block.
+name: g2b-resident-cp8
+config: stageB_lora_a100.yaml
+data: gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/sft/latest/
+overrides: ["--step_scheduler.max_steps", "6", "--step_scheduler.ckpt_every_steps", "1000", "--step_scheduler.val_every_steps", "1000",
+            "--distributed.cp_size", "8", "--distributed.offload_policy", "null"]
+upload_every_min: 5

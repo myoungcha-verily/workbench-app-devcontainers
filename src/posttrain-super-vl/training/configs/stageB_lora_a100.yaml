@@ -1,0 +1,149 @@
+# Stage B LoRA SFT of Nemotron 3.5 Super VL on 8x A100 40GB (one a2-highgpu-8g), text-only agent trajectories.
+# Derived from AutoModel's examples/vlm_finetune/nemotron_3_5_super_vl/nemotron_3_5_super_vl_spider_peft.yaml
+# (verified by NVIDIA on 8x H100 80GB: rank 64, seq 2048, 38.8 GiB/GPU peak). Changes for A100 40GB and long sequences
+# (all UNVERIFIED until the smoke gates in docs/stageB_training_plan.md pass):
+#   - frozen base offloaded to host RAM (FSDP2 CPUOffloadPolicy): the BF16 experts alone are ~26 GiB/GPU under EP8,
+#     which leaves too little of 40 GB for 16k-64k-token activations;
+#   - dispatcher torch (all-to-all) instead of hybridep (DeepEP/HybridEP on sm80 not verified); experts torch;
+#   - chunked LM-head cross-entropy (no full [seq x 131k] logits);
+#   - LoRA rank 32 / alpha 64; agent data through training/sft_dataset.py (tool schemas in the template).
+# Memory (docs/stageB_training_plan.md section 3): with the base offloaded, activations dominate, at ~1.05 MiB/token
+# with full activation checkpointing. A 32k sequence (~34 GiB) does not fit one GPU, so cp_size 2 splits each sequence
+# over 2 GPUs (dp 4, grad-accum 2). The 64k variant (job g3) uses cp_size 4 and max_length 65536.
+# Launch (inside the container, via run_job.py): automodel stageB_lora_a100.yaml --nproc-per-node 8 [overrides]
+
+recipe: FinetuneRecipeForVLM
+
+step_scheduler:
+  global_batch_size: 8        # 8 trajectories per optimizer step: cp_size 2 -> dp 4 x grad-accum 2
+  local_batch_size: 1
+  ckpt_every_steps: 100
+  val_every_steps: 100
+  max_steps: 650              # ~1 pass over train_weighted.jsonl (weights x 3 epochs) for ~1,800 trajectories; set per job
+  num_epochs: 1
+
+dist_env:
+  backend: nccl
+  timeout_minutes: 60         # host-offloaded weights make the first steps slow
+
+rng:
+  _target_: nemo_automodel.components.training.rng.StatefulRNG
+  seed: 42
+  ranked: true
+
+model:
+  _target_: nemo_automodel.NeMoAutoModelForImageTextToText.from_pretrained
+  pretrained_model_name_or_path: /data/models/super-vl-bf16
+  trust_remote_code: true
+  num_nextn_predict_layers: 0           # MTP head not trained / not loaded
+  torch_dtype: torch.bfloat16
+  backend:
+    _target_: nemo_automodel.components.models.common.BackendConfig
+    dispatcher: torch
+    experts: torch
+    attn: te
+    linear: te
+    rms_norm: torch_fp32
+    rope_fusion: false
+    fake_balanced_gate: false
+    enable_hf_state_dict_adapter: true  # adapter keys in HF naming (needed for merge / vLLM LoRA)
+
+peft:
+  _target_: nemo_automodel.components._peft.lora.PeftConfig
+  match_all_linear: false
+  # Same targets as the NVIDIA recipe: Mamba in/out_proj, attention q/k/v/o, MoE latent projections, shared experts.
+  # Routed experts, router, vision tower/projector and lm_head stay frozen.
+  exclude_modules:
+    - "*vision_tower*"
+    - "*vision_model*"
+    - "*vision_projector*"
+    - "*audio*"
+    - "*sound*"
+    - "*lm_head*"
+    - "*mlp1*"
+  dim: 32
+  alpha: 64
+  dropout: 0.0
+  use_triton: true
+
+processor:
+  _target_: transformers.AutoProcessor.from_pretrained
+  pretrained_model_name_or_path: /data/models/super-vl-bf16
+  trust_remote_code: true
+
+checkpoint:
+  enabled: true
+  checkpoint_dir: checkpoints           # relative to /data/runs/<job>; run_job.py copies it to the workspace bucket
+  model_save_format: safetensors
+  save_consolidated: false              # adapters only (~0.2 GB); merging is a separate CPU step (merge_lora.py)
+
+distributed:
+  strategy: fsdp2
+  tp_size: 1
+  cp_size: 2                  # Mamba: hidden-parallel CP (context_parallel/mamba.py); attention: TE CP
+  pp_size: 1
+  ep_size: 8
+  sequence_parallel: false
+  activation_checkpointing: true
+  reshard_after_forward: true
+  offload_policy:
+    _target_: torch.distributed.fsdp.CPUOffloadPolicy
+    pin_memory: true
+  moe:
+    reshard_after_forward: true
+
+freeze_config:
+  freeze_vision_tower: true
+  freeze_audio_tower: true
+  freeze_language_model: false
+
+loss_fn:
+  _target_: nemo_automodel.components.loss.chunked_ce.ChunkedCrossEntropy
+  chunk_len: 1024
+
+dataset:
+  _target_: sft_dataset.make_agent_sft_dataset
+  file: train_weighted.jsonl
+  max_tokens: 32768
+
+dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  num_workers: 2
+  shuffle: false                        # train_weighted.jsonl is already shuffled (seeded) by export_sft.py
+  collate_fn:
+    _target_: sft_dataset.agent_collate_fn
+    max_length: 32768
+    pad_to_multiple: 128
+    mask_empty_think: true
+  drop_last: true
+
+validation_dataset:
+  _target_: sft_dataset.make_agent_sft_dataset
+  file: val.jsonl
+  max_tokens: 32768
+
+validation_dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  num_workers: 1
+  collate_fn:
+    _target_: sft_dataset.agent_collate_fn
+    max_length: 32768
+    pad_to_multiple: 128
+    mask_empty_think: true
+
+wandb:
+  enable: false
+
+optimizer:
+  _target_: torch.optim.AdamW            # fp32 states for ~90M LoRA params (~1 GB total): no need for TE fused tricks
+  lr: 1.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 20
+  min_lr: 1.0e-5
+
+clip_grad_norm:
+  max_norm: 1.0

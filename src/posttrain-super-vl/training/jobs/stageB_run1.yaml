@@ -1,0 +1,6 @@
+# Full Stage B run (after G0-G2 pass). Set max_steps = rows(train_weighted.jsonl) / 8 from the export manifest.
+name: stageB-run1
+config: stageB_lora_a100.yaml
+data: gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/sft/latest/
+overrides: ["--step_scheduler.max_steps", "650"]
+upload_every_min: 15

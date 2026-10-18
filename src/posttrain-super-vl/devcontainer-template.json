@@ -1,0 +1,28 @@
+{
+    "id": "posttrain-super-vl",
+    "version": "0.1.0",
+    "name": "Post-training Nemotron 3.5 Super VL",
+    "description": "NeMo AutoModel training container for LoRA SFT of Nemotron 3.5 Super VL on the workspace's own agent trajectories. Idles until a job spec is placed in the workspace bucket; nothing leaves the workspace.",
+    "options": {
+        "cloud": {
+            "type": "string",
+            "description": "VM cloud environment",
+            "proposals": [
+                "gcp"
+            ],
+            "default": "gcp"
+        },
+        "login": {
+            "type": "string",
+            "description": "Whether to log in to workbench CLI",
+            "proposals": [
+                "true",
+                "false"
+            ],
+            "default": "false"
+        }
+    },
+    "platforms": [
+        "Any"
+    ]
+}
