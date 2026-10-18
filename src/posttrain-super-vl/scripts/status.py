@@ -21,10 +21,10 @@ class H(http.server.BaseHTTPRequestHandler):
             prog = s.parent / "progress.log"
             tail = "".join(open(prog, errors="replace").readlines()[-15:]) if prog.exists() else ""
             parts.append(f"<h3>{html.escape(st['name'])}: {html.escape(st['state'])}</h3><pre>{html.escape(tail)}</pre>")
-        for f in ("start.log",):
+        for f, n in (("start.log", 20), ("setup_automodel.log", 60), ("download.log", 10)):  # setup output only, no data
             p = pathlib.Path("/data/logs") / f
             if p.exists():
-                parts.append(f"<h3>{f}</h3><pre>{html.escape(''.join(open(p).readlines()[-20:]))}</pre>")
+                parts.append(f"<h3>{f}</h3><pre>{html.escape(''.join(open(p, errors='replace').readlines()[-n:]))}</pre>")
         body = ("<html><body style='font-family:monospace'>" + "".join(parts) + "</body></html>").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
