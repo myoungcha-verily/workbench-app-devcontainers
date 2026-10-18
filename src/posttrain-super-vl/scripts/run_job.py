@@ -63,6 +63,12 @@ def main():
     status["data"] = {"source": data, "files": sorted(p.name for p in local_data.iterdir())}
     cfg = spec["config"] if spec["config"].startswith("/") else f"/workspace/training/configs/{spec['config']}"
     nproc = str(spec.get("nproc") or subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).stdout.count("GPU "))
+    for c in spec.get("setup", []):  # optional environment fixes before training (shell, logged; workspace-only bucket)
+        with open(run / "setup.log", "a") as slog:
+            slog.write(f"$ {c}\n"); slog.flush()
+            r = subprocess.run(c, shell=True, stdout=slog, stderr=subprocess.STDOUT, cwd=run)
+            slog.write(f"[exit {r.returncode}]\n")
+        gcs.put(str(run / "setup.log"), f"{remote}/setup.log")
     cmd = ["automodel", cfg, "--nproc-per-node", nproc] + [str(x) for x in spec.get("overrides", [])]
     env = {**os.environ, "PYTHONPATH": "/workspace/training:" + os.environ.get("PYTHONPATH", ""),
            "SFT_DATA_DIR": str(local_data), "RUN_DIR": str(run)}

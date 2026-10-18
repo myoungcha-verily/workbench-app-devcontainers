@@ -18,17 +18,28 @@ cd "$SRC"
 # dependency resolve can try to replace pinned packages. Missing pure-Python deps are added one by one below.
 if command -v uv >/dev/null; then PIP=(uv pip install --python "$PY"); else PIP=("$PY" -m pip install); fi
 "${PIP[@]}" --no-deps -e .
-for i in 1 2 3 4 5; do
+# The pinned transformers (and its huggingface_hub) are newer than the container's; upgrade them while pinning the
+# container's own torch build so nothing replaces the tested CUDA stack.
+TORCH_PIN=$(mktemp); "$PY" -c "import torch; print('torch==' + torch.__version__)" > "$TORCH_PIN"
+TF=$(grep -oE '"transformers==[^"]+"' pyproject.toml | tr -d '"')
+"${PIP[@]}" --constraint "$TORCH_PIN" "${TF:-transformers}"
+for i in 1 2 3 4 5 6; do
   miss=$("$PY" -c "
 import importlib, sys
 try:
     from nemo_automodel.components.datasets.llm import agent_chat
     from nemo_automodel.components.distributed.context_parallel import mamba
+    import nemo_automodel.cli.app  # noqa: the `automodel` entry point (imports transformers, peft, ...)
 except ModuleNotFoundError as e:
-    print(e.name.split('.')[0]); sys.exit(0)
+    print('missing', e.name.split('.')[0]); sys.exit(0)
+except ImportError as e:  # e.g. cannot import name X from huggingface_hub -> too old
+    print('upgrade', (e.name or '').split('.')[0]); sys.exit(0)
 " 2>/dev/null)
   [ -z "$miss" ] && break
-  echo "installing missing dependency: $miss"; "${PIP[@]}" "$miss"
+  set -- $miss
+  [ -z "${2:-}" ] && { echo "unresolved import problem: $miss"; break; }
+  echo "$1 dependency: $2"
+  if [ "$1" = upgrade ]; then "${PIP[@]}" --constraint "$TORCH_PIN" -U "$2"; else "${PIP[@]}" --constraint "$TORCH_PIN" "$2"; fi
 done
 "$PY" -c "import nemo_automodel, sys; print('nemo_automodel', getattr(nemo_automodel, '__version__', '?'), nemo_automodel.__file__)"
 "$PY" -c "from nemo_automodel.components.datasets.llm import agent_chat; from nemo_automodel.components.distributed.context_parallel import mamba; print('agent_chat + mamba CP present')"
