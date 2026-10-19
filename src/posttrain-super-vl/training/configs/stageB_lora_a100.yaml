@@ -86,9 +86,8 @@ distributed:
   sequence_parallel: false
   activation_checkpointing: true
   reshard_after_forward: true
-  offload_policy:
-    _target_: torch.distributed.fsdp.CPUOffloadPolicy
-    pin_memory: true
+  # No host offload: FSDP2 CPU offload does not cover MoE experts under expert parallelism (tested 2026-10-18).
+  # Weights stay on GPU: needs 80 GB GPUs (A100 80GB / H100); 8x A100 40GB OOMs in backward even at 12k tokens.
   moe:
     reshard_after_forward: true
 
@@ -98,8 +97,9 @@ freeze_config:
   freeze_language_model: false
 
 loss_fn:
-  _target_: nemo_automodel.components.loss.chunked_ce.ChunkedCrossEntropy
-  chunk_len: 1024
+  # ChunkedCrossEntropy requires a plain bias-free nn.Linear head; Super VL's head is not (tested 2026-10-18)
+  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+  fp32_upcast: true
 
 dataset:
   _target_: sft_dataset.make_agent_sft_dataset
