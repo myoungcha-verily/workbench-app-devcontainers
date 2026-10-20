@@ -17,7 +17,25 @@ PY
 
 # Optional: serve a fine-tuned (merged) checkpoint from the workspace bucket instead of the Hugging Face base. The pointer
 # file holds a gs:// directory; it is synced once per distinct path into /data/models/served-<name>.
-SERVE_POINTER=${SERVE_POINTER:-gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/serve/current.txt}
+# Several servers can run at once: a pointer named after this VM (current_<instance-name>.txt) wins over the shared one.
+INSTANCE=$(curl -s -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/name 2>/dev/null)
+SERVE_POINTER_DIR=gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/serve
+read_gcs() { python3 - "$1" <<'PY' 2>/dev/null
+import json, sys, urllib.parse, urllib.request
+bucket, obj = sys.argv[1][5:].split("/", 1)
+md = urllib.request.Request("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                            headers={"Metadata-Flavor": "Google"})
+tok = json.load(urllib.request.urlopen(md))["access_token"]
+url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{urllib.parse.quote(obj, safe='')}?alt=media"
+print(urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})).read().decode().strip())
+PY
+}
+if [ -n "$INSTANCE" ] && read_gcs "$SERVE_POINTER_DIR/current_$INSTANCE.txt" >/dev/null; then
+  SERVE_POINTER=${SERVE_POINTER:-$SERVE_POINTER_DIR/current_$INSTANCE.txt}
+else
+  SERVE_POINTER=${SERVE_POINTER:-$SERVE_POINTER_DIR/current.txt}
+fi
+log "pointer file: $SERVE_POINTER"
 SERVED=$(python3 - "$SERVE_POINTER" <<'PY' 2>/dev/null
 import json, sys, urllib.parse, urllib.request
 bucket, obj = sys.argv[1][5:].split("/", 1)
@@ -64,6 +82,22 @@ PY
     touch "$MODEL_DIR/.complete"
   fi
 fi
+
+# Optional extra vLLM flags from the workspace bucket (e.g. MTP speculative decoding on H100), read at every start.
+# per GPU type, so enabling a flag for H100 servers never changes the A100 server: extra_args_h100.txt / extra_args_a100.txt
+GPU_TAG=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | grep -oE 'H100|A100|H200|B200|L4' | tr 'A-Z' 'a-z')
+EXTRA_GCS=${EXTRA_GCS:-gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/serve/extra_args_${GPU_TAG:-unknown}.txt}
+EXTRA_FROM_GCS=$(python3 - "$EXTRA_GCS" <<'PY' 2>/dev/null
+import json, sys, urllib.parse, urllib.request
+bucket, obj = sys.argv[1][5:].split("/", 1)
+md = urllib.request.Request("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                            headers={"Metadata-Flavor": "Google"})
+tok = json.load(urllib.request.urlopen(md))["access_token"]
+url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{urllib.parse.quote(obj, safe='')}?alt=media"
+print(urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})).read().decode().strip())
+PY
+)
+[ -n "$EXTRA_FROM_GCS" ] && { EXTRA_ARGS="$EXTRA_ARGS $EXTRA_FROM_GCS"; log "extra args from bucket: $EXTRA_FROM_GCS"; }
 
 if [ ! -f "$MODEL_DIR/.complete" ]; then
   log "downloading $MODEL_REPO to $MODEL_DIR"
