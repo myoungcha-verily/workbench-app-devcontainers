@@ -85,7 +85,9 @@ fi
 
 # Optional extra vLLM flags from the workspace bucket (e.g. MTP speculative decoding on H100), read at every start.
 # per GPU type, so enabling a flag for H100 servers never changes the A100 server: extra_args_h100.txt / extra_args_a100.txt
-GPU_TAG=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | grep -oE 'H100|A100|H200|B200|L4' | tr 'A-Z' 'a-z')
+# fail loudly (not silently via set -e/pipefail) when the container came up without GPUs (Workbench detection race)
+nvidia-smi -L >/dev/null 2>&1 || { log "no GPU visible in the container (nvidia-smi failed); restart the app"; sleep 60; exit 1; }
+GPU_TAG=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 | grep -oE 'H100|A100|H200|B200|L4' | tr 'A-Z' 'a-z' || true)
 EXTRA_GCS=${EXTRA_GCS:-gs://eval-benchmark-wb-meteoric-gourd-5139/posttrain/serve/extra_args_${GPU_TAG:-unknown}.txt}
 EXTRA_FROM_GCS=$(python3 - "$EXTRA_GCS" <<'PY' 2>/dev/null
 import json, sys, urllib.parse, urllib.request
