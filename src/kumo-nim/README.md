@@ -5,9 +5,9 @@ port 8080. Supported GPUs per NGC: A10G, L4, L40S, H100 (an L4 `g2-standard-*` V
 
 Before creating the app, put two secrets in the workspace bucket (never in this repo):
 
-- `gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/ngc_api_key`: an NGC API key whose account has accepted the
+- `gs://myoung-bucket-wb-fleeting-lemon-7624/kumo_zus/secrets/ngc_api_key`: an NGC API key whose account has accepted the
   NIM's terms (non-commercial research/evaluation license).
-- `gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/kumo_nim_token`: a random token clients send as `X-API-Key`.
+- `gs://myoung-bucket-wb-fleeting-lemon-7624/kumo_zus/secrets/kumo_nim_token`: a random token clients send as `X-API-Key`.
 
 The launcher mounts the host Docker socket to run the NIM as a sibling container (no published port; reachable only via
 the proxy). Check `wb app logs` for `[kumo-nim]` lines; `GET /proxy-health` (no token) reports the NIM's readiness.

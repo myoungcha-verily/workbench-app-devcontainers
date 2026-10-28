@@ -11,10 +11,10 @@ services:
     restart: always
     environment:
       NIM_IMAGE: "nvcr.io/nim/nvidia/kumo-relational:1.0.1"
-      NGC_KEY_GCS: "gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/ngc_api_key"
+      NGC_KEY_GCS: "gs://myoung-bucket-wb-fleeting-lemon-7624/kumo_zus/secrets/ngc_api_key"
       # Token required by the proxy on :8080 (X-API-Key or Bearer). The port is reachable from other VMs in the VPC
       # without Workbench auth, and the NIM itself has no authentication.
-      API_TOKEN_GCS: "gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/kumo_nim_token"
+      API_TOKEN_GCS: "gs://myoung-bucket-wb-fleeting-lemon-7624/kumo_zus/secrets/kumo_nim_token"
     volumes:
       - .:/workspace:cached
       - /var/run/docker.sock:/var/run/docker.sock
