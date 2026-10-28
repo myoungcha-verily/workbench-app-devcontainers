@@ -1,0 +1,28 @@
+{
+    "id": "kumo-nim",
+    "version": "0.1.0",
+    "name": "Kumo Relational NIM",
+    "description": "NVIDIA Kumo Relational NIM (relational foundation model) behind a token-checking proxy, for in-workspace prediction experiments.",
+    "options": {
+        "cloud": {
+            "type": "string",
+            "description": "VM cloud environment",
+            "proposals": [
+                "gcp"
+            ],
+            "default": "gcp"
+        },
+        "login": {
+            "type": "string",
+            "description": "Whether to log in to workbench CLI",
+            "proposals": [
+                "true",
+                "false"
+            ],
+            "default": "false"
+        }
+    },
+    "platforms": [
+        "Any"
+    ]
+}

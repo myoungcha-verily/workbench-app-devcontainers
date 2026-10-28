@@ -1,0 +1,29 @@
+services:
+  app:
+    # Workbench proxies to the container named "application-server" on "app-network". This is a launcher: the NIM
+    # image lives in NGC's private registry, so it can't be the build base. The launcher reads the NGC key from the
+    # workspace bucket at start, logs in, and runs the NIM as a sibling container through the host Docker socket.
+    container_name: "application-server"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: always
+    environment:
+      NIM_IMAGE: "nvcr.io/nim/nvidia/kumo-relational:1.0.1"
+      NGC_KEY_GCS: "gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/ngc_api_key"
+      # Token required by the proxy on :8080 (X-API-Key or Bearer). The port is reachable from other VMs in the VPC
+      # without Workbench auth, and the NIM itself has no authentication.
+      API_TOKEN_GCS: "gs://eval-benchmark-wb-meteoric-gourd-5139/secrets/kumo_nim_token"
+    volumes:
+      - .:/workspace:cached
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      # Must be published on 0.0.0.0, or the Workbench proxy finds no target port.
+      - "8080:8080"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    external: true
